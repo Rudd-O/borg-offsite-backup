@@ -1,0 +1,27 @@
+#!/usr/bin/python3
+
+import os
+import shlex
+import sys
+
+opts = [
+    "ServerAliveInterval 300",
+    "ServerAliveCountMax 2",
+    "ConnectTimeout 10",
+]
+opts_list = []
+for opt in opts:
+    opts_list.extend(["-o", opt])
+
+cmd = (
+    ["ssh"] + opts_list + [sys.argv[2], " ".join(shlex.quote(x) for x in sys.argv[3:])]
+)
+cmd = [
+    "qvm-run",
+    "-a",
+    "--nogui",
+    "--pass-io",
+    sys.argv[1],
+    " ".join(shlex.quote(x) for x in cmd),
+]
+os.execvp("qvm-run", cmd)
