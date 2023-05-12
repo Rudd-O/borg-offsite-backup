@@ -4,7 +4,7 @@ Sample configuration `/etc/borg-offsite-backup.conf`:
 
 ```
 {
-    "myself": "dom0",
+    "backup_path": "/var/backups/dom0",
     "backup_server": "milena.dragonfear",
     "backup_user": "qubes_backup_dom0",
     "bridge_vm": "backup",
@@ -39,3 +39,22 @@ Sample configuration `/etc/borg-offsite-backup.conf`:
 ```
 
 The Borg key will by default be stored in `~/.borg-offsite-backup.key`.
+
+The backup server's login shell for the backup server's backup user
+should be this program (note the use of `--restrict-to-path` which
+you should change to be the actual backup path, and you should also
+have the `nice`, `ionice`, `borgbackup` and `logger` programs on
+the remote server):
+
+```
+#!/bin/bash -e
+logger -p local7.notice -t backupsh "Initiating backup access as user $USER from client $SSH_CLIENT assigned to $HOME/qubes"
+ret=0
+nice ionice -c3 borg serve --restrict-to-path /path/to/backup/directory || ret=$?
+if [ "$ret" = "0" ] ; then
+    logger -p local7.notice -t backupsh "Finished backup access for user $USER"
+else
+    logger -p local7.error -t backupsh "Error in backup access for user $USER -- return code $ret"
+fi
+exit $ret
+```

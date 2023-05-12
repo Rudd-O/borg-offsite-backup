@@ -182,7 +182,7 @@ class DatasetToBackup(object):
 
 
 class Cfg(object):
-    myself: str = ""
+    backup_path: str = ""
     bridge_vm: Optional[str] = None
     backup_server: str = ""
     compression = "auto,zstd"
@@ -236,7 +236,7 @@ class Cfg(object):
             else:
                 if v:
                     setattr(c, k, v)
-        for p in "myself backup_server backup_user".split():
+        for p in "backup_path backup_server backup_user".split():
             if not getattr(c, p):
                 raise ValueError("%s must be defined in %s" % (p, fn))
         if not c.datasets_to_backup and not c.filesystems_to_backup:
@@ -737,9 +737,7 @@ def main(args: List[str]) -> None:
     execdate = output("date", "+%Y-%m-%d").strip()
     os.environ["BORG_KEY_FILE"] = os.path.expanduser("~/.borg-offsite-backup.key")
     os.environ["BORG_PASSPHRASE"] = ""
-    os.environ[
-        "BORG_REPO"
-    ] = "{backup_user}@{backup_server}:/var/backups/{myself}/qubes".format(
+    os.environ["BORG_REPO"] = "{backup_user}@{backup_server}:{backup_path}".format(
         **c.as_dict()
     )
     if "TMPDIR" not in os.environ:
