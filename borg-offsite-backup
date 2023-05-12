@@ -444,7 +444,7 @@ class VmBridgeContext(object):
         self.vm_name = vm_name
         self.was_running_before = False
 
-    def __enter__(self) -> "VmBridgeContext":
+    def __enter__(self) -> None:
         def wrap(cmd: List[str]) -> List[str]:
             return [
                 "qvm-run",
@@ -465,7 +465,6 @@ class VmBridgeContext(object):
         os.environ["BORG_RSH"] = (
             "borg-offsite-backup-helper" + " " + shlex.quote(self.vm_name)
         )
-        return self
 
     def __exit__(self, *ignored: Any) -> None:
         if "BORG_RSH" in os.environ:
@@ -478,10 +477,8 @@ class NoBridgeContext(object):
     def __init__(self, host: str) -> None:
         self.host = host
 
-    def __enter__(self) -> "NoBridgeContext":
+    def __enter__(self) -> Non:
         check_connectivity(cmd=nc(self.host))
-
-        return self
 
     def __exit__(self, *ignored: Any) -> None:
         pass
@@ -760,13 +757,13 @@ def main(args: List[str]) -> None:
             else DummyContext()
         )
 
-    connect_context: Callable[[], Any] = (
-        lambda: VmBridgeContext(c.bridge_vm, c.backup_server)
+    connect_context: Any = (
+        VmBridgeContext(c.bridge_vm, c.backup_server)
         if c.bridge_vm is not None
-        else lambda: NoBridgeContext(c.backup_server)
+        else NoBridgeContext(c.backup_server)
     )
 
-    with connect_context():
+    with connect_context:
         with multi_context(*backup_contexts):
             if not terminated:
                 retval = (
