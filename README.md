@@ -4,9 +4,11 @@ Sample configuration `/etc/borg-offsite-backup.conf`:
 
 ```
 {
+    "myself": "dom0",
     "backup_server": "milena.dragonfear",
     "backup_user": "qubes_backup_dom0",
     "bridge_vm": "backup",
+    "ssh_from": "user"
     "datasets_to_backup": [
         "tank/ROOT/os",
         "tank/home",
@@ -33,7 +35,7 @@ Sample configuration `/etc/borg-offsite-backup.conf`:
         "/boot",
         "/boot/efi"
     ],
-    "myself": "dom0",
-    "ssh_from": "user"
 }
 ```
+
+The Borg key will by default be stored in `~/.borg-offsite-backup.key`.

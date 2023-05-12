@@ -15,7 +15,6 @@ Source0:        https://github.com/Rudd-O/%{name}/archive/{%version}.tar.gz#/%{n
 BuildRequires:  make
 Requires:       python3
 Requires:       python3-dateutil
-Requires:       python3-pyyaml
 Requires:       time
 Requires:       fuse
 Requires:       borgbackup

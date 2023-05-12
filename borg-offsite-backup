@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-import dateutil.parser
+import dateutil.parser  # type: ignore
 
 from subprocess import check_call as cc
 from subprocess import call
@@ -31,11 +31,11 @@ from typing import (
     Optional,
 )
 
-
-ROOT = ".borg"
-SNAPSHOT_PREFIX = "@borg-"
 TYPE_VOLUME = "volume"
 TYPE_FILESYSTEM = "filesystem"
+
+ZFS_SNAPSHOT_ROOT = ".borg-offsite-backup"
+SNAPSHOT_PREFIX = "@borg-"
 ZVOL_DEV_ROOT = "/dev/zvol"
 
 echo: List[str] = []
@@ -291,10 +291,15 @@ class SnapshotContext(object):
     def roots(self) -> List[str]:
         return list(
             set(
-                os.path.join(d.name.partition("/")[0], ROOT)
+                os.path.join(d.name.partition("/")[0], ZFS_SNAPSHOT_ROOT)
                 for d in self.datasets_to_backup
             )
         )
+
+    def snapshot_to_target(self, d: str) -> str:
+        return os.path.join(
+            d.partition("/")[0], ZFS_SNAPSHOT_ROOT, d.partition("/")[2]
+        ).rstrip("/")
 
     def __enter__(self) -> "SnapshotContext":
         sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
@@ -304,9 +309,8 @@ class SnapshotContext(object):
                 create_dataset(root)
 
         for d, typ, mp in self.datasets_to_backup_sorted_by_mountpoint():
-
             snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
-            target_name = os.path.join(d.partition("/")[0], ROOT, d.partition("/")[2])
+            target_name = self.snapshot_to_target(d)
             if not snapshot_exists(snapshot_name):
                 create_snapshot(snapshot_name)
 
@@ -315,7 +319,7 @@ class SnapshotContext(object):
 
         for d, typ, mp in self.datasets_to_backup_sorted_by_mountpoint():
             snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
-            target_name = os.path.join(d.partition("/")[0], ROOT, d.partition("/")[2])
+            target_name = self.snapshot_to_target(d)
 
             if typ == TYPE_VOLUME:
                 source_dev = os.path.join(ZVOL_DEV_ROOT, target_name)
@@ -344,7 +348,7 @@ class SnapshotContext(object):
     def __exit__(self, *unused: Any) -> None:
         for d, typ, mp in reversed(self.datasets_to_backup_sorted_by_mountpoint()):
             mp = self.tmpdir + mp.rstrip("/")
-            target_name = os.path.join(d.partition("/")[0], ROOT, d.partition("/")[2])
+            target_name = self.snapshot_to_target(d)
             if typ == TYPE_VOLUME:
                 target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, d)
                 if os.path.isfile(target_dev):
