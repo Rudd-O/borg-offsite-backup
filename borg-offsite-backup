@@ -477,7 +477,7 @@ class NoBridgeContext(object):
     def __init__(self, host: str) -> None:
         self.host = host
 
-    def __enter__(self) -> Non:
+    def __enter__(self) -> None:
         check_connectivity(cmd=nc(self.host))
 
     def __exit__(self, *ignored: Any) -> None:
