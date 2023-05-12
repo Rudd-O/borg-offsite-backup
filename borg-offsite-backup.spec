@@ -3,7 +3,7 @@
 %define mybuildnumber %{?build_number}%{?!build_number:1}
 
 Name:           borg-offsite-backup
-Version:        0.1.3
+Version:        0.1.4
 Release:        %{mybuildnumber}%{?dist}
 Summary:        A Borg backup helper that helps back up ZFS file systems as well as regular ones
 BuildArch:      noarch

@@ -635,7 +635,8 @@ def run_collector(promfile: str) -> None:
         arcdata = json.loads(
             subprocess.check_output(
                 [
-                    "/usr/local/bin/borg-offsite-backup",
+                    sys.executable,
+                    sys.argv[0],
                     "info",
                     "--json",
                     "::" + archive["name"],
