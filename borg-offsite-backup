@@ -566,10 +566,10 @@ def run(
     else:
         cmd = ["borg", subcommand] + args
         ret = subprocess.call(echo + cmd)
-        if subcommand == "create" and ret == 1:
-            # This is just a warning.
-            ret = 0
-        return ret
+    if subcommand == "create" and ret == 1:
+        # This is just a warning.
+        ret = 0
+    return ret
 
 
 def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
