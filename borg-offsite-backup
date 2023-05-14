@@ -727,6 +727,12 @@ def main(args: List[str]) -> None:
         status(msg, *more)
         sys.exit(exit)
 
+    if opts.subcommand == "telemetry" and not opts.telemetry_file:
+        fatal(
+            os.EX_USAGE,
+            "The telemetry subcommand is not supported without a --telemetry-file argument",
+        )
+
     try:
         c = Cfg.from_file(opts.config)
     except ValueError as e:
