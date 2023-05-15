@@ -79,6 +79,10 @@ def dataset_exists(dataset_name: str) -> bool:
     )
 
 
+def is_mountpoint(mp: str) -> bool:
+    return call(["mountpoint", "-q", "--", mp]) == 0
+
+
 def list_props(
     dataset_name: str, props: List[str], recursive: bool
 ) -> List[Dict[str, str]]:
@@ -336,7 +340,7 @@ class SnapshotContext(object):
                 )
             else:
                 mp = self.tmpdir + mp.rstrip("/")
-                if not os.path.exists(mp) or not os.path.ismount(mp):
+                if not os.path.exists(mp) or not is_mountpoint(mp):
                     mount_dataset(target_name, mp)
 
         return self
@@ -351,7 +355,7 @@ class SnapshotContext(object):
                     status("Deleting device file %s", target_dev)
                     sudo("rm", "-f", target_dev)
             else:
-                if os.path.ismount(mp):
+                if is_mountpoint(mp):
                     unmount_dataset(target_name)
 
         for root in self.roots():
@@ -376,20 +380,20 @@ class BindMountContext(object):
     def __enter__(self) -> "BindMountContext":
         needsmount = []
         for d, mp in self.fsmounts():
-            if not os.path.exists(mp) or not os.path.ismount(mp):
+            if not os.path.exists(mp) or not is_mountpoint(mp):
                 needsmount.append((mp, d))
         for mp, d in list(sorted(needsmount)):
             status("Creating %s", mp)
             if not os.path.exists(mp):
                 sudo("mkdir", "-m", "700", "-p", "--", mp)
-            if not os.path.ismount(mp):
+            if not is_mountpoint(mp):
                 status("Mounting %s onto %s", d, mp)
                 sudo("mount", "--bind", d, mp)
         return self
 
     def __exit__(self, *unused: Any) -> None:
         for d, mp in reversed(list(self.fsmounts())):
-            if os.path.ismount(mp):
+            if is_mountpoint(mp):
                 try:
                     status("Unmounting file system %s", mp)
                     sudo("umount", mp)
