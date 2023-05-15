@@ -286,7 +286,7 @@ class SnapshotContext(object):
                     continue
                 arrange.append((name, type_, mp))
                 already.add(name)
-        return list(sorted(arrange, key=lambda x: x[1] + "/" + x[2] + "/" + x[0]))
+        return list(sorted(arrange, key=lambda x: x[1] + "/" + x[2]))
 
     def roots(self) -> List[str]:
         return list(
@@ -302,8 +302,6 @@ class SnapshotContext(object):
         ).rstrip("/")
 
     def __enter__(self) -> "SnapshotContext":
-        sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
-
         for root in self.roots():
             if not dataset_exists(root):
                 create_dataset(root)
@@ -340,8 +338,6 @@ class SnapshotContext(object):
                 mp = self.tmpdir + mp.rstrip("/")
                 if not os.path.exists(mp) or not os.path.ismount(mp):
                     mount_dataset(target_name, mp)
-
-            # status(f"Ready to back up dataset {d} (mounted at {mp})")
 
         return self
 
