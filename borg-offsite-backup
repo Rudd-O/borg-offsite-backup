@@ -374,6 +374,7 @@ class BindMountContext(object):
             yield (d, os.path.join(self.tmpdir + d))
 
     def __enter__(self) -> "BindMountContext":
+        assert 0, "\n".join(x for x in self.fsmounts())
         needsmount = []
         for d, mp in self.fsmounts():
             if not os.path.exists(mp) or not os.path.ismount(mp):
@@ -385,7 +386,6 @@ class BindMountContext(object):
             if not os.path.ismount(mp):
                 status("Mounting %s onto %s", d, mp)
                 sudo("mount", "--bind", d, mp)
-            status("Ready to back up filesystem %s (mounted at %s)", d, mp)
         return self
 
     def __exit__(self, *unused: Any) -> None:
@@ -408,6 +408,9 @@ class TmpDirContext(object):
         sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
 
     def __exit__(self, *unused: Any) -> None:
+        if call(["findmnt", self.tmpdir]) == 0:
+            raise Exception("Will not remove anything under the temporary directory since file systems are still mounted on it.")
+
         try:
             status("Removing %s", self.tmpdir)
             qtmp = shlex.quote(self.tmpdir)
@@ -418,7 +421,7 @@ class TmpDirContext(object):
             )
         except subprocess.CalledProcessError:
             status(output("find", self.tmpdir))
-            status(output("mount"))
+            status(output("findmnt", self.tmpdir))
             raise
 
 
