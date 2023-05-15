@@ -158,7 +158,7 @@ def mount_dataset(dataset_name: str, mountpoint: str) -> None:
 
 
 def unmount_dataset(dataset_name: str) -> None:
-    status(f"Unmounting {dataset_name}")
+    status(f"Unmounting dataset {dataset_name}")
     sudo("zfs", "set", "mountpoint=none", dataset_name)
 
 
@@ -364,7 +364,7 @@ class SnapshotContext(object):
 
         for d, typ, mp in reversed(self.datasets_to_backup_sorted_by_mountpoint()):
             snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
-            if snapshot_exists:
+            if snapshot_exists(snapshot_name):
                 destroy_dataset_recursively(snapshot_name)
 
 
@@ -373,11 +373,13 @@ class BindMountContext(object):
         self.filesystems_to_backup = filesystems_to_backup
         self.tmpdir = tmpdir
 
-    def __enter__(self) -> "BindMountContext":
-        sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
-        needsmount = []
+    def fsmounts(self):
         for d in sorted(self.filesystems_to_backup):
-            mp = os.path.join(self.tmpdir + d)
+            yield (d, os.path.join(self.tmpdir + d))
+
+    def __enter__(self) -> "BindMountContext":
+        needsmount = []
+        for d, mp in self.fsmounts():
             if not os.path.exists(mp) or not os.path.ismount(mp):
                 needsmount.append((mp, d))
         for mp, d in list(sorted(needsmount)):
@@ -391,22 +393,25 @@ class BindMountContext(object):
         return self
 
     def __exit__(self, *unused: Any) -> None:
-        while True:
-            fsinfo = [s for s in output("findmnt", "-r").splitlines() if s.strip()]
-            mountpoints = [s.split()[0] for s in fsinfo]
-            mountpoints = [
-                bytes(s, "utf-8").decode("unicode_escape") for s in mountpoints
-            ]
-            mountpoints = [
-                s
-                for s in mountpoints
-                if s.startswith(self.tmpdir + "/") or s == self.tmpdir
-            ]
-            if not mountpoints:
-                break
-            mp = list(sorted(mountpoints, key=lambda x: len(x)))[-1]
-            status("Unmounting %s", mp)
-            sudo("umount", mp)
+        for d, mp in reversed(list(self.fsmounts())):
+            if os.path.ismount(mp):
+                try:
+                    status("Unmounting file system %s", mp)
+                    sudo("umount", mp)
+                except subprocess.CalledProcessError as exc:
+                    status("Unmounting file system %s failed: %s", mp, exc)
+                    time.sleep(1)
+                    continue
+
+
+class TmpDirContext(object):
+    def __init__(self, tmpdir: str) -> None:
+        self.tmpdir = tmpdir
+
+    def __enter__(self) -> "TmpDirContext":
+        sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
+
+    def __exit__(self, *unused: Any) -> None:
         try:
             status("Removing %s", self.tmpdir)
             qtmp = shlex.quote(self.tmpdir)
@@ -750,6 +755,9 @@ def main(args: List[str]) -> None:
 
     backup_contexts: List[Callable[[], Any]] = []
     if opts.subcommand in ["create", "cleanup"]:
+        backup_contexts.append(
+            lambda: TmpDirContext(backup_root)
+        )
         if c.datasets_to_backup:
             backup_contexts.append(
                 lambda: SnapshotContext(c.datasets_to_backup, execdate, backup_root)
