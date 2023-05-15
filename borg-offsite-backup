@@ -374,7 +374,6 @@ class BindMountContext(object):
             yield (d, os.path.join(self.tmpdir + d))
 
     def __enter__(self) -> "BindMountContext":
-        assert 0, "\n".join(x for x in self.fsmounts())
         needsmount = []
         for d, mp in self.fsmounts():
             if not os.path.exists(mp) or not os.path.ismount(mp):
