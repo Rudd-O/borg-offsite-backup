@@ -373,11 +373,11 @@ class BindMountContext(object):
         self.filesystems_to_backup = filesystems_to_backup
         self.tmpdir = tmpdir
 
-    def fsmounts(self):
+    def fsmounts(self) -> Generator[Tuple[str, str], None, None]:
         for d in sorted(self.filesystems_to_backup):
             yield (d, os.path.join(self.tmpdir + d))
 
-    def __enter__(self) -> "BindMountContext":
+    def __enter__(self) -> None:
         needsmount = []
         for d, mp in self.fsmounts():
             if not os.path.exists(mp) or not is_mountpoint(mp):
@@ -389,7 +389,6 @@ class BindMountContext(object):
             if not is_mountpoint(mp):
                 status("Mounting %s onto %s", d, mp)
                 sudo("mount", "--bind", d, mp)
-        return self
 
     def __exit__(self, *unused: Any) -> None:
         for d, mp in reversed(list(self.fsmounts())):
@@ -407,12 +406,15 @@ class TmpDirContext(object):
     def __init__(self, tmpdir: str) -> None:
         self.tmpdir = tmpdir
 
-    def __enter__(self) -> "TmpDirContext":
+    def __enter__(self) -> None:
         sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
 
     def __exit__(self, *unused: Any) -> None:
         if call(["findmnt", self.tmpdir]) == 0:
-            raise Exception("Will not remove anything under the temporary directory since file systems are still mounted on it.")
+            raise Exception(
+                "Will not remove anything under the temporary "
+                "directory since file systems are still mounted on it."
+            )
 
         try:
             status("Removing %s", self.tmpdir)
@@ -569,7 +571,7 @@ def run(
                 + args
                 + ["::" + execdate, "."]
             )
-            return subprocess.call(echo + cmd)
+            ret = subprocess.call(echo + cmd)
     else:
         cmd = ["borg", subcommand] + args
         ret = subprocess.call(echo + cmd)
@@ -737,7 +739,8 @@ def main(args: List[str]) -> None:
     if opts.subcommand == "telemetry" and not opts.telemetry_file:
         fatal(
             os.EX_USAGE,
-            "The telemetry subcommand is not supported without a --telemetry-file argument",
+            "The telemetry subcommand is not supported without a "
+            "--telemetry-file argument",
         )
 
     try:
@@ -757,9 +760,7 @@ def main(args: List[str]) -> None:
 
     backup_contexts: List[Callable[[], Any]] = []
     if opts.subcommand in ["create", "cleanup"]:
-        backup_contexts.append(
-            lambda: TmpDirContext(backup_root)
-        )
+        backup_contexts.append(lambda: TmpDirContext(backup_root))
         if c.datasets_to_backup:
             backup_contexts.append(
                 lambda: SnapshotContext(c.datasets_to_backup, execdate, backup_root)
