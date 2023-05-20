@@ -261,6 +261,7 @@ class SnapshotContext(object):
         self.datasets_to_backup = datasets_to_backup
         self.execdate = execdate
         self.tmpdir = tmpdir
+        self.read_special = False
 
     def datasets_to_backup_sorted_by_mountpoint(self) -> List[Tuple[str, str, str]]:
         arrange = []
@@ -324,6 +325,7 @@ class SnapshotContext(object):
             target_name = self.snapshot_to_target(d)
 
             if typ == TYPE_VOLUME:
+                self.read_special = True
                 source_dev = os.path.join(ZVOL_DEV_ROOT, target_name)
                 target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, d)
                 status("Creating device file %s from %s", target_dev, source_dev)
@@ -528,6 +530,7 @@ def run(
     execdate: str,
     compression: str,
     subcommand: str,
+    read_special: bool,
     args: List[str],
 ) -> int:
     if is_locked():
@@ -543,9 +546,11 @@ def run(
                 excludefile.flush()
             params = ["--progress"] if not os.environ.get("QUIET") else []
             if "comment" in output("borg", "create", "--help"):
-                params + ["--comment", "global"]
+                params += ["--comment", "global"]
             if "--sparse" in output("borg", "create", "--help"):
-                params + ["--sparse"]
+                params += ["--sparse"]
+            if read_special:
+                params += ["--read-special"]
             cmd = (
                 [
                     "time",
@@ -563,7 +568,6 @@ def run(
                     "--exclude-from",
                     excludefn,
                     "--debug",
-                    "--read-special",
                     "--compression",
                     compression,
                 ]
@@ -782,12 +786,25 @@ def main(args: List[str]) -> None:
     )
 
     with connect_context:
-        with multi_context(*backup_contexts):
+        with multi_context(*backup_contexts) as context_results:
+            snapshot_contexts = [
+                c for c in context_results if isinstance(c, SnapshotContext)
+            ]
+            read_special = (
+                snapshot_contexts[0].read_special if snapshot_contexts else False
+            )
             if not terminated:
                 retval = (
                     None
                     if opts.subcommand in ["cleanup", "telemetry"]
-                    else run(c, execdate, c.compression, opts.subcommand, borg_args)
+                    else run(
+                        c,
+                        execdate,
+                        c.compression,
+                        opts.subcommand,
+                        read_special,
+                        borg_args,
+                    )
                 )
             if terminated and retval:
                 retval = 0
