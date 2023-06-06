@@ -436,7 +436,11 @@ def check_connectivity(cmd: List[str]) -> None:
     for _ in range(10):
         with open(os.devnull, "rb") as devnull:
             p = subprocess.run(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=devnull
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=devnull,
+                timeout=10,
             )
         if p.returncode != 0:
             time.sleep(3)
