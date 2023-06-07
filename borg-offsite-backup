@@ -2,7 +2,6 @@
 
 import argparse
 import collections
-import concurrent.futures
 import contextlib
 import fnmatch
 import glob
@@ -25,6 +24,7 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TypedDict,
     TypeVar,
     cast,
 )
@@ -636,10 +636,37 @@ def run_collector(promfile: str) -> None:
 
     start = time.time()
 
-    data = json.loads(
-        subprocess.check_output(
-            [sys.executable, sys.argv[0], "list", "--json"], timeout=300
-        ).decode("utf-8")
+    class Repository(TypedDict):
+        id: str
+        last_modified: str
+        location: str
+
+    class ArchiveStats(TypedDict):
+        compressed_size: int
+        deduplicated_size: int
+        nfiles: int
+        original_size: int
+
+    class ArchiveDetail(TypedDict):
+        comment: str
+        duration: int
+        end: str
+        name: str
+        start: str
+        stats: ArchiveStats
+
+    class ArchiveInfo(TypedDict):
+        archives: List[ArchiveDetail]
+        repository: Repository
+
+    data = cast(
+        ArchiveInfo,
+        json.loads(
+            subprocess.check_output(
+                [sys.executable, sys.argv[0], "info", "--last=1000", "--json"],
+                timeout=300,
+            ).decode("utf-8")
+        ),
     )
     p(
         Metric(
@@ -649,65 +676,39 @@ def run_collector(promfile: str) -> None:
         )
     )
 
-    def get_arcdata(archive_name: str) -> Dict[str, Any]:
-        return cast(
-            Dict[str, Any],
-            json.loads(
-                subprocess.check_output(
-                    [
-                        sys.executable,
-                        sys.argv[0],
-                        "info",
-                        "--json",
-                        "::" + archive_name,
-                    ],
-                    timeout=300,
-                ).decode("utf-8")
-            ),
+    for arcdata in data["archives"]:
+        lbs = {"archive": arcdata["name"]}
+        lbs["dataset"] = arcdata["comment"]
+
+        p(
+            Metric(
+                name="archive_start_timestamp_seconds",
+                labels=lbs,
+                value=r2t(arcdata["start"]),
+            )
+        )
+        p(
+            Metric(
+                name="archive_end_timestamp_seconds",
+                labels=lbs,
+                value=r2t(arcdata["end"]),
+            )
         )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [
-            executor.submit(get_arcdata, archive["name"])
-            for archive in data["archives"]
-        ]
-
-    for future in concurrent.futures.as_completed(futures):
-        arcdata = future.result()
-
-        for number, subarchive in enumerate(arcdata["archives"]):
-            lbs = {"archive": subarchive["name"]}
-            if len(arcdata["archives"]) > 1:
-                lbs["dataset"] = (
-                    subarchive["comment"] if subarchive["comment"] else str(number)
-                )
+        archivestats = arcdata["stats"]
+        for k, v in archivestats.items():
             p(
                 Metric(
-                    name="archive_start_timestamp_seconds",
+                    name="archive_%s"
+                    % (
+                        (k + "_bytes")
+                        if ("size" in k)
+                        else ("files" if k == "nfiles" else k)
+                    ),
                     labels=lbs,
-                    value=r2t(subarchive["start"]),
+                    value=v,
                 )
             )
-            p(
-                Metric(
-                    name="archive_end_timestamp_seconds",
-                    labels=lbs,
-                    value=r2t(subarchive["end"]),
-                )
-            )
-            for k, v in subarchive["stats"].items():
-                p(
-                    Metric(
-                        name="archive_%s"
-                        % (
-                            (k + "_bytes")
-                            if ("size" in k)
-                            else ("files" if k == "nfiles" else k)
-                        ),
-                        labels=lbs,
-                        value=v,
-                    )
-                )
 
     end = time.time()
     p(Metric(name="collection_duration_seconds", labels={}, value=(end - start)))
