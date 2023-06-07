@@ -637,9 +637,9 @@ def run_collector(promfile: str) -> None:
     start = time.time()
 
     data = json.loads(
-        subprocess.check_output([sys.executable, sys.argv[0], "list", "--json"]).decode(
-            "utf-8"
-        )
+        subprocess.check_output(
+            [sys.executable, sys.argv[0], "list", "--json"], timeout=300
+        ).decode("utf-8")
     )
     p(
         Metric(
@@ -657,7 +657,8 @@ def run_collector(promfile: str) -> None:
                     "info",
                     "--json",
                     "::" + archive["name"],
-                ]
+                ],
+                timeout=300,
             ).decode("utf-8")
         )
         for number, subarchive in enumerate(arcdata["archives"]):
