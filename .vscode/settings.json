@@ -5,5 +5,14 @@
         "--show-column-numbers",
         "--no-pretty",
         "--strict"
+    ],
+    "[python]": {
+        "editor.codeActionsOnSave": [
+            "source.organizeImports"
+        ],
+    },
+    "python.analysis.fixAll": [
+        "source.unusedImports",
+        "source.convertImportFormat"
     ]
 }

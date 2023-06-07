@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import concurrent.futures
 import contextlib
 import fnmatch
 import glob
@@ -13,23 +14,22 @@ import subprocess
 import sys
 import tempfile
 import time
-
-import dateutil.parser  # type: ignore
-
-from subprocess import check_call as cc
 from subprocess import call
+from subprocess import check_call as cc
 from typing import (
     Any,
-    List,
-    Tuple,
-    Dict,
-    cast,
     Callable,
-    TypeVar,
-    Type,
+    Dict,
     Generator,
+    List,
     Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    cast,
 )
+
+import dateutil.parser  # type: ignore
 
 TYPE_VOLUME = "volume"
 TYPE_FILESYSTEM = "filesystem"
@@ -648,19 +648,33 @@ def run_collector(promfile: str) -> None:
             value=r2t(data["repository"]["last_modified"]),
         )
     )
-    for archive in data["archives"]:
-        arcdata = json.loads(
-            subprocess.check_output(
-                [
-                    sys.executable,
-                    sys.argv[0],
-                    "info",
-                    "--json",
-                    "::" + archive["name"],
-                ],
-                timeout=300,
-            ).decode("utf-8")
+
+    def get_arcdata(archive_name: str) -> Dict[str, Any]:
+        return cast(
+            Dict[str, Any],
+            json.loads(
+                subprocess.check_output(
+                    [
+                        sys.executable,
+                        sys.argv[0],
+                        "info",
+                        "--json",
+                        "::" + archive_name,
+                    ],
+                    timeout=300,
+                ).decode("utf-8")
+            ),
         )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(get_arcdata, archive["name"])
+            for archive in data["archives"]
+        ]
+
+    for future in concurrent.futures.as_completed(futures):
+        arcdata = future.result()
+
         for number, subarchive in enumerate(arcdata["archives"]):
             lbs = {"archive": subarchive["name"]}
             if len(arcdata["archives"]) > 1:
