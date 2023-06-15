@@ -38,6 +38,8 @@ ZFS_SNAPSHOT_ROOT = ".borg-offsite-backup"
 SNAPSHOT_PREFIX = "@borg-"
 ZVOL_DEV_ROOT = "/dev/zvol"
 
+TELEMETRY_TIMEOUT = 600
+
 echo: List[str] = []
 terminated = False
 
@@ -664,7 +666,7 @@ def run_collector(promfile: str) -> None:
         json.loads(
             subprocess.check_output(
                 [sys.executable, sys.argv[0], "info", "--last=1000", "--json"],
-                timeout=300,
+                timeout=TELEMETRY_TIMEOUT,
             ).decode("utf-8")
         ),
     )
