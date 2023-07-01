@@ -38,7 +38,12 @@ ZFS_SNAPSHOT_ROOT = ".borg-offsite-backup"
 SNAPSHOT_PREFIX = "@borg-"
 ZVOL_DEV_ROOT = "/dev/zvol"
 
-TELEMETRY_TIMEOUT = 600
+DEFAULT_TELEMETRY_TIMEOUT = 600
+SSH_OPTS = [
+    "ServerAliveInterval 300",
+    "ServerAliveCountMax 2",
+    "ConnectTimeout 10",
+]
 
 echo: List[str] = []
 terminated = False
@@ -479,8 +484,12 @@ class VmBridgeContext(object):
 
         check_connectivity(cmd=wrap(nc(self.host)))
 
-        os.environ["BORG_RSH"] = (
-            "borg-offsite-backup-helper" + " " + shlex.quote(self.vm_name)
+        opts_list = []
+        for opt in SSH_OPTS:
+            opts_list.extend(["-o", opt])
+
+        os.environ["BORG_RSH"] = "borg-offsite-backup-helper " + " ".join(
+            shlex.quote(x) for x in opts_list + [self.vm_name]
         )
 
     def __exit__(self, *ignored: Any) -> None:
@@ -497,8 +506,15 @@ class NoBridgeContext(object):
     def __enter__(self) -> None:
         check_connectivity(cmd=nc(self.host))
 
+        opts_list = []
+        for opt in SSH_OPTS:
+            opts_list.extend(["-o", opt])
+
+        os.environ["BORG_RSH"] = "ssh " + " ".join(shlex.quote(x) for x in opts_list)
+
     def __exit__(self, *ignored: Any) -> None:
-        pass
+        if "BORG_RSH" in os.environ:
+            del os.environ["BORG_RSH"]
 
 
 @contextlib.contextmanager
@@ -613,7 +629,7 @@ def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
     return subprocess.call(echo + cmd)
 
 
-def run_collector(promfile: str) -> None:
+def run_collector(promfile: str, telemetry_timeout: int) -> None:
     def r2t(x: str) -> float:
         return cast(float, dateutil.parser.parse(x).timestamp())
 
@@ -666,7 +682,7 @@ def run_collector(promfile: str) -> None:
         json.loads(
             subprocess.check_output(
                 [sys.executable, sys.argv[0], "info", "--last=1000", "--json"],
-                timeout=TELEMETRY_TIMEOUT,
+                timeout=telemetry_timeout,
             ).decode("utf-8")
         ),
     )
@@ -735,6 +751,12 @@ def parse_args(args: List[str]) -> Tuple[argparse.Namespace, List[str]]:
     p.add_argument(
         "--telemetry-file",
         help="path to a file to save Node Exporter telemetry after creating a backup",
+    )
+    p.add_argument(
+        "--telemetry-timeout",
+        type=int,
+        help="how long to wait until giving up on collecting telemetry",
+        default=DEFAULT_TELEMETRY_TIMEOUT,
     )
     p.add_argument(
         "--config",
@@ -844,7 +866,7 @@ def main(args: List[str]) -> None:
             and opts.subcommand in ["create", "telemetry", "delete", "rename"]
             and not terminated
         ):
-            run_collector(opts.telemetry_file)
+            run_collector(opts.telemetry_file, opts.telemetry_timeout)
 
     for val, proc in [
         (retval, "Backup"),

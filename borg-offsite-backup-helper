@@ -1,26 +1,37 @@
 #!/usr/bin/python3
 
-import os
 import shlex
 import sys
 
-opts_list = []
-for opt in [
-    "ServerAliveInterval 300",
-    "ServerAliveCountMax 2",
-    "ConnectTimeout 10",
-]:
-    opts_list.extend(["-o", opt])
+args = sys.argv[1:]
 
-cmd = (
-    ["ssh"] + opts_list + [sys.argv[2], " ".join(shlex.quote(x) for x in sys.argv[3:])]
-)
+opts_list = []
+is_opt = False
+to_pop: list[int] = []
+for n, arg in enumerate(args):
+    if arg == "-o":
+        opts_list.append(arg)
+        is_opt = True
+        to_pop.append(n)
+    elif is_opt:
+        opts_list.append(arg)
+        is_opt = False
+        to_pop.append(n)
+    else:
+        break
+
+for x in reversed(to_pop):
+    args.pop(x)
+
+
+cmd = ["ssh"] + opts_list + [args[1], " ".join(shlex.quote(x) for x in args[2:])]
 cmd = [
     "qvm-run",
     "-a",
     "--nogui",
     "--pass-io",
-    sys.argv[1],
+    args[0],
     " ".join(shlex.quote(x) for x in cmd),
 ]
-os.execvp("qvm-run", cmd)
+print(cmd)
+# os.execvp("qvm-run", cmd)
