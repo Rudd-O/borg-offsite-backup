@@ -34,5 +34,4 @@ cmd = [
     args[0],
     " ".join(shlex.quote(x) for x in cmd),
 ]
-print(cmd)
-# os.execvp("qvm-run", cmd)
+os.execvp("qvm-run", cmd)
