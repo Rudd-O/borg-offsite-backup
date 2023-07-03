@@ -863,7 +863,7 @@ def main(args: List[str]) -> None:
 
         if (
             opts.telemetry_file
-            and opts.subcommand in ["create", "telemetry", "delete", "rename"]
+            and opts.subcommand in ["create", "telemetry", "delete", "rename", "prune"]
             and not terminated
         ):
             run_collector(opts.telemetry_file, opts.telemetry_timeout)
