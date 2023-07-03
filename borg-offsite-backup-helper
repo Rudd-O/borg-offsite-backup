@@ -2,12 +2,13 @@
 
 import shlex
 import sys
+from typing import List
 
 args = sys.argv[1:]
 
 opts_list = []
 is_opt = False
-to_pop: list[int] = []
+to_pop: List[int] = []
 for n, arg in enumerate(args):
     if arg == "-o":
         opts_list.append(arg)
