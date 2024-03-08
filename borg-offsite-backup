@@ -457,7 +457,7 @@ def check_connectivity(cmd: List[str]) -> None:
 
 
 def nc(host: str) -> List[str]:
-    return ["nc", "-w", "3", host, "22"]
+    return ["nc", "-w", "15", host, "22"]
 
 
 class VmBridgeContext(object):
