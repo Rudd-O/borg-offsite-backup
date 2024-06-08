@@ -110,6 +110,8 @@ def create_dataset(dataset: str) -> None:
         "-o",
         "com.sun:auto-snapshot=false",
         "-o",
+        "org.qubes-os:part-of-qvm-pool=true",
+        "-o",
         "secondarycache=metadata",
         "-o",
         "mountpoint=none",
