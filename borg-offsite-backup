@@ -42,7 +42,7 @@ DEFAULT_TELEMETRY_TIMEOUT = 600
 SSH_OPTS = [
     "ServerAliveInterval 300",
     "ServerAliveCountMax 2",
-    "ConnectTimeout 10",
+    "ConnectTimeout 45",
 ]
 
 echo: List[str] = []
@@ -459,7 +459,7 @@ def check_connectivity(cmd: List[str]) -> None:
 
 
 def nc(host: str) -> List[str]:
-    return ["nc", "-w", "15", host, "22"]
+    return ["nc", "-w", "45", host, "22"]
 
 
 class VmBridgeContext(object):
