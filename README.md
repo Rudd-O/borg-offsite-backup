@@ -1,8 +1,22 @@
 # borg-offsite-backup: help back up Qubes VMs and ZFS file systems
 
+This utility will back up any arbitrary file system (without any
+guarantees of consistency) and any tree of ZFS datasets (with
+full crash consistency guarantees) to a remote Borg server, which
+is trivial to set up.
+
+Thanks to Borg, backups are deduplicated, they are orders of magnitude
+faster than regular `rsync` or `tar` backups, and they are encrypted.
+
 ## On the client
 
 The Borg key will by default be stored in `~/.borg-offsite-backup.key`.
+This is where the tool expects it to be.  Once you have set up the
+server (see below), you should be able to initialize the repository
+on the server by running `borg-offsite-backup init -v -e keyfile-blake2`
+on the client.
+
+You must also configure the client before initializing the repository.
 
 Sample configuration `/etc/borg-offsite-backup.conf` for a Qubes OS
 dom0 that has ZFS volumes backing the system's qubes:
@@ -148,6 +162,12 @@ exit $ret
 
 As you can see from the "shell", the backup will be stored in the
 subfolder `qubes` of the server's user.
+
+### Needed software
+
+You'll need an SSH server running on the backup server, and you'll
+need the `borgbackup` (also known as `borg`) package installed on
+that machine.
 
 ### Key authentication for clients
 
