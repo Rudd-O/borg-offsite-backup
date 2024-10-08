@@ -14,7 +14,8 @@ The Borg key will by default be stored in `~/.borg-offsite-backup.key`.
 This is where the tool expects it to be.  Once you have set up the
 server (see below), you should be able to initialize the repository
 on the server by running `borg-offsite-backup init -v -e keyfile-blake2`
-on the client.
+on the client.  **Back the Borg key up securely.  Without it, you can
+never restore from your backup**.
 
 You must also configure the client before initializing the repository.
 
