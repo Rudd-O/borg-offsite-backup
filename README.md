@@ -8,16 +8,57 @@ is trivial to set up.
 Thanks to Borg, backups are deduplicated, they are orders of magnitude
 faster than regular `rsync` or `tar` backups, and they are encrypted.
 
+The main difference with the `borg` CLI is that the host, user and
+path to the backup are assumed.  You only deal in the name of the backup,
+which is always and automatically selected to be the ISO date of the
+day of the backup:
+
+
+```
+# creates :yyyy-mm-dd
+borg-offsite-backup create
+# lists archives
+borg-offsite-backup list
+# extracts path/to/file from ::yyyy-mm-dd
+borg-offsite-backup extract ::yyyy-mm-dd path/to/file
+```
+
+## How is data structured in the backup?
+
+While regular file systems are backed up with their normal structure,
+ZFS volumes are backed up as big files under `/dev/zvol`.  The utility
+makes no attempt to back up or restore qube metadata, but a full backup
+of the root file system should save all the Qubes OS metadata files
+needed to reconstruct qubes by hand.
+
+Restoring individual files from a regular file system backup can be
+accomplished with the command line:
+
+```
+borg-offsite-backup extract ::yyyy-mm-dd path/to/file
+```
+
+Restoring individual volumes to a zvol can be accomplished with the
+command line:
+
+```
+# This assumes /dev/zvol/myvolume is the same size in bytes as the
+# corresponding backed-up volume.
+borg-offsite-backup extract --stdout ::yyyy-mm-dd dev/zvol/myvolume | dd of=/dev/zvol/myvolume bs=10M
+```
+
 ## On the client
 
 The Borg key will by default be stored in `~/.borg-offsite-backup.key`.
 This is where the tool expects it to be.  Once you have set up the
 server (see below), you should be able to initialize the repository
 on the server by running `borg-offsite-backup init -v -e keyfile-blake2`
-on the client.  **Back the Borg key up securely.  Without it, you can
-never restore from your backup**.
+on the client.  **Back the Borg key up securely to a different machine.
+Without it, you can never restore from your backup**.
 
 You must also configure the client before initializing the repository.
+We also recommend you store this configuration alongside the key in
+your key backup.
 
 Sample configuration `/etc/borg-offsite-backup.conf` for a Qubes OS
 dom0 that has ZFS volumes backing the system's qubes:
