@@ -737,6 +737,12 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
         if promfile in ["/dev/stdout", "-"]:
             f = sys.stdout
         else:
+            if os.path.sep not in promfile:
+                cmd = "cat /proc/$(pgrep -f /usr/bin/node_exporter | head -1)/cmdline | tr '\\0' '\\n' | grep -- --collector.textfile.directory= | sed 's/^--collector.textfile.directory=//'"
+                directory = subprocess.check_output(
+                    ["bash", "-c", cmd], text=True
+                ).rstrip("\n")
+                promfile = os.path.join(directory, promfile)
             f = open(promfile + "." + str(os.getpid()), "w")
         for m in metrics:
             f.write((repr_metric(m) + "\n"))
@@ -752,7 +758,7 @@ def parse_args(args: List[str]) -> Tuple[argparse.Namespace, List[str]]:
     p = argparse.ArgumentParser()
     p.add_argument(
         "--telemetry-file",
-        help="path to a file to save Node Exporter telemetry after creating a backup",
+        help="path to a file to save Node Exporter telemetry after creating a backup; if the path is not standard output and does not contain a directory, the Node Exporter collector directory will be used",
     )
     p.add_argument(
         "--telemetry-timeout",
