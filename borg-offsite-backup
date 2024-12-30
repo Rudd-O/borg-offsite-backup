@@ -749,6 +749,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             f.write((repr_metric(m) + "\n"))
         if f != sys.stdout:
             f.flush()
+            os.chmod(promfile + "." + str(os.getpid()), 0o644)
             os.rename(promfile + "." + str(os.getpid()), promfile)
     finally:
         if f and f != sys.stdout:
