@@ -7,5 +7,6 @@
     "python.analysis.fixAll": [
         "source.unusedImports",
         "source.convertImportFormat"
-    ]
+    ],
+    "makefile.configureOnOpen": false
 }
