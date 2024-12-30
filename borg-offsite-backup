@@ -733,6 +733,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
     end = time.time()
     p(Metric(name="collection_duration_seconds", labels={}, value=(end - start)))
 
+    f = None
     try:
         if promfile in ["/dev/stdout", "-"]:
             f = sys.stdout
@@ -750,7 +751,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             f.flush()
             os.rename(promfile + "." + str(os.getpid()), promfile)
     finally:
-        if f != sys.stdout:
+        if f and f != sys.stdout:
             f.close()
 
 
