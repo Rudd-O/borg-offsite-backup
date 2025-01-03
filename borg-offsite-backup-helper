@@ -1,15 +1,16 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+
+"""Helper script to run borg-backup on a remote machine using qvm-run."""
 
 import os
 import shlex
 import sys
-from typing import List
 
 args = sys.argv[1:]
 
 opts_list = []
 is_opt = False
-to_pop: List[int] = []
+to_pop: list[int] = []
 for n, arg in enumerate(args):
     if arg == "-o":
         opts_list.append(arg)
@@ -26,7 +27,7 @@ for x in reversed(to_pop):
     args.pop(x)
 
 
-cmd = ["ssh"] + opts_list + [args[1], " ".join(shlex.quote(x) for x in args[2:])]
+cmd = ["ssh", *opts_list, args[1], " ".join(shlex.quote(x) for x in args[2:])]
 cmd = [
     "qvm-run",
     "-a",
@@ -35,4 +36,4 @@ cmd = [
     args[0],
     " ".join(shlex.quote(x) for x in cmd),
 ]
-os.execvp("qvm-run", cmd)
+os.execvp("qvm-run", cmd)  # noqa: S606, S607 # no shell, partial cmd path

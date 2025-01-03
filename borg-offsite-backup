@@ -1,7 +1,8 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+
+"""Borg Offsite Backup."""
 
 import argparse
-import collections
 import contextlib
 import fnmatch
 import glob
@@ -13,23 +14,17 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Generator
+from pathlib import Path
 from subprocess import call
 from subprocess import check_call as cc
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Tuple,
-    Type,
-    TypedDict,
-    TypeVar,
-    cast,
-)
+from typing import Any, NamedTuple, TypedDict, TypeVar, cast
 
-import dateutil.parser  # type: ignore
+import dateutil.parser
+
+# ruff: noqa: S607 # Starting a process with a partial executable path
+# ruff: noqa: S603 # `subprocess` call: check for execution of untrusted input
+
 
 TYPE_VOLUME = "volume"
 TYPE_FILESYSTEM = "filesystem"
@@ -45,11 +40,13 @@ SSH_OPTS = [
     "ConnectTimeout 45",
 ]
 
-echo: List[str] = []
+echo: list[str] = []
 terminated = False
+dry_run = False
 
 
-def sigterm(*args: Any) -> None:
+def sigterm(*_: Any) -> None:
+    """Handle SIGTERM by setting terminated=True."""
     global terminated
     terminated = True
 
@@ -57,25 +54,44 @@ def sigterm(*args: Any) -> None:
 def status(string: str, *args: Any) -> None:
     if args:
         string = string % args
-    print(string, file=sys.stderr)
     if hasattr(sys.stderr, "flush"):
         sys.stderr.flush()
 
 
-def sudo(*cmd: str, **kwargs: Any) -> None:
-    cc(([] if os.getuid() == 0 else ["sudo"]) + list(cmd), **kwargs)
+def sudo(*cmd: str, **kwargs: Any) -> None:  # noqa: ANN401
+    """Run a command with sudo (if not already root)."""
+    sudo_or_not = [] if os.getuid() == 0 else ["sudo"]
+    if dry_run:
+        status(f"Would run: {' '.join(sudo_or_not + list(cmd))}")
+        return
+    cc((sudo_or_not) + list(cmd), **kwargs)
 
 
-def output(*cmd: str, **kwargs: Any) -> str:
-    return cast(str, subprocess.check_output(cmd, universal_newlines=True, **kwargs))
+def output(*cmd: Any, **kwargs: Any) -> str:  # noqa: ANN401
+    """Run a command and return the output."""
+    if dry_run:
+        status(f"Would run: {' '.join(cmd)}")
+        return ""
+    return subprocess.check_output(cmd, text=True, **kwargs)
 
 
-def sudoutput(*cmd: str) -> str:
-    lcmd = ([] if os.getuid() == 0 else ["sudo"]) + list(cmd)
-    return output(*lcmd)
+def sudoutput(*cmd: Any) -> str:  # noqa: ANN401
+    """Run a command with sudo and return the output."""
+    sudo_or_not = [] if os.getuid() == 0 else ["sudo"]
+    if dry_run:
+        status(f"Would run: {' '.join(sudo_or_not + list(cmd))}")
+        return ""
+    lcmd: list[str] = (sudo_or_not) + list(cmd)
+    return output(lcmd)
 
 
 def dataset_exists(dataset_name: str) -> bool:
+    """Check if a dataset exists.
+
+    :param dataset_name: Name of the dataset.
+    :return: True if the dataset exists, False otherwise.
+
+    """
     return (
         call(
             ["zfs", "list", dataset_name],
@@ -87,23 +103,42 @@ def dataset_exists(dataset_name: str) -> bool:
 
 
 def is_mountpoint(mp: str) -> bool:
+    """Check if string is a mountpoint.
+
+    :param mp: The mountpoint to check.
+    :return: True if the string is a mountpoint, False otherwise.
+    """
     return call(["mountpoint", "-q", "--", mp]) == 0
 
 
 def list_props(
-    dataset_name: str, props: List[str], recursive: bool
-) -> List[Dict[str, str]]:
+    dataset_name: str,
+    props: list[str],
+    *,
+    recursive: bool,
+) -> list[dict[str, str]]:
+    """List properties of a ZFS dataset.
+
+    :param dataset_name: The name of the dataset.
+    :param props: The properties to list.
+    :param recursive: Whether to list the properties recursively.
+    :return: The properties of the dataset.
+
+    """
     cmd = (
         ["zfs", "list", "-o", ",".join(props), "-H"]
         + (["-r"] if recursive else [])
         + [dataset_name]
     )
     return [
-        dict(zip(props, s.split("\t"))) for s in output(*cmd).splitlines() if s.strip()
+        dict(zip(props, s.split("\t"), strict=False))
+        for s in output(*cmd).splitlines()
+        if s.strip()
     ]
 
 
 def create_dataset(dataset: str) -> None:
+    """Create a ZFS dataset."""
     sudo(
         "zfs",
         "create",
@@ -123,13 +158,21 @@ Y = TypeVar("Y")
 
 
 def retrier(fun: Callable[..., Y], count: int, timeout: float) -> Y:
+    """Retry a function until it succeeds or the count is reached.
+
+    :param fun: The function to call.
+    :param count: The number of retries.
+    :param timeout: The time to wait between retries.
+    :return: The result of the function.
+
+    """
     if count < 1:
-        raise ValueError("count must be larger than zero")
+        msg = "count must be larger than zero"
+        raise ValueError(msg)
     while True:
         try:
-            val = fun()
-            return val
-        except KeyboardInterrupt:
+            return fun()
+        except KeyboardInterrupt:  # noqa: PERF203 # no need for performance here
             raise
         except Exception:
             if count < 1:
@@ -139,6 +182,12 @@ def retrier(fun: Callable[..., Y], count: int, timeout: float) -> Y:
 
 
 def snapshot_exists(snapshot_name: str) -> bool:
+    """Check if a ZFS snapshot exists.
+
+    :param snapshot_name: The name of the snapshot.
+    :return: True if the snapshot exists, False otherwise.
+
+    """
     return (
         call(
             ["zfs", "list", "-t", "snapshot", snapshot_name],
@@ -150,11 +199,22 @@ def snapshot_exists(snapshot_name: str) -> bool:
 
 
 def create_snapshot(snapshot_name: str) -> None:
+    """Create a ZFS snapshot.
+
+    :param snapshot_name: The name of the snapshot.
+
+    """
     status(f"Snapshotting current {snapshot_name}")
     sudo("zfs", "snapshot", snapshot_name)
 
 
 def clone_snapshot(snapshot_name: str, dataset_name: str) -> None:
+    """Clone a ZFS snapshot.
+
+    :param snapshot_name: The name of the snapshot.
+    :param dataset_name: The name of the dataset to clone to.
+
+    """
     status(f"Cloning {snapshot_name} to {dataset_name}")
     sudo(
         "zfs",
@@ -166,37 +226,88 @@ def clone_snapshot(snapshot_name: str, dataset_name: str) -> None:
 
 
 def mount_dataset(dataset_name: str, mountpoint: str) -> None:
+    """Mount a ZFS dataset.
+
+    :param dataset_name: The name of the dataset.
+    :param mountpoint: The mountpoint to mount the dataset on.
+
+    """
     status(f"Mounting {dataset_name} onto {mountpoint}")
     sudo("zfs", "set", "mountpoint=" + mountpoint, dataset_name)
 
 
 def unmount_dataset(dataset_name: str) -> None:
+    """Unmount a ZFS dataset.
+
+    :param dataset_name: The name of the dataset.
+
+    """
     status(f"Unmounting dataset {dataset_name}")
     sudo("zfs", "set", "mountpoint=none", dataset_name)
 
 
 def destroy_dataset_recursively(dataset: str) -> None:
+    """Destroy a ZFS dataset recursively.
+
+    :param dataset: The name of the dataset.
+
+    """
     status(f"Destroying {dataset} recursively")
     sudo("zfs", "destroy", "-r", dataset)
 
 
 @contextlib.contextmanager
 def multi_context(*cms: Callable[[], Any]) -> Generator[Any, None, None]:
+    """Create a context manager that manages multiple context managers.
+
+    :param cms: The context managers to manage.
+    :return: The results of the context managers.
+
+    """
     with contextlib.ExitStack() as stack:
         yield [stack.enter_context(cls()) for cls in cms]
 
 
-class DatasetToBackup(object):
-    def __init__(self, name: str, recursive: bool, glob: bool):
+class DatasetToBackup:
+    """A dataset to backup.
+
+    :param name: The name of the dataset.
+    :param recursive: Whether to backup the dataset recursively.
+    :param glob: Whether to use globbing to match the dataset.
+
+    """
+
+    def __init__(  # noqa: D107
+        self,
+        name: str,
+        *,
+        recursive: bool,
+        glob: bool,
+    ) -> None:
         self.name = name
-        assert not (recursive and glob), (name, recursive, glob)
+        if recursive and glob:
+            msg = f"Invalid combination of recursive and glob for dataset {name}"
+            raise ValueError(msg)
         self.recursive = recursive
         self.glob = glob
 
 
-class Cfg(object):
+class Cfg:
+    """Configuration for the backup.
+
+    :param backup_path: Path to the backup.
+    :param bridge_vm: Name of the bridge VM. Optional.
+    :param backup_server: Name of the backup server.
+    :param compression: Compression algorithm to use. Defaults to "auto,zstd".
+    :param backup_user: User to use for the backup.
+    :param keep_daily: Number of daily backups to keep. Defaults to 7.
+    :param keep_weekly: Number of weekly backups to keep. Defaults to 4.
+    :param keep_monthly: Number of monthly backups to keep. Defaults to 12.
+
+    """
+
     backup_path: str = ""
-    bridge_vm: Optional[str] = None
+    bridge_vm: str | None = None
     backup_server: str = ""
     compression = "auto,zstd"
     backup_user: str = ""
@@ -204,12 +315,17 @@ class Cfg(object):
     keep_weekly = 4
     keep_monthly = 12
 
-    def __init__(self) -> None:
-        self.filesystems_to_backup: List[str] = []
-        self.datasets_to_backup: List[DatasetToBackup] = []
-        self.exclude_patterns: List[str] = []
+    def __init__(self) -> None:  # noqa: D107 # docstring in __init__
+        self.filesystems_to_backup: list[str] = []
+        self.datasets_to_backup: list[DatasetToBackup] = []
+        self.exclude_patterns: list[str] = []
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
+        """Return the configuration as a dictionary.
+
+        :return: The configuration as a dictionary.
+
+        """
         d = {}
         for k in dir(self):
             v = getattr(self, k)
@@ -218,12 +334,21 @@ class Cfg(object):
         return d
 
     @classmethod
-    def from_file(klass: Type["Cfg"], fn: str) -> "Cfg":
+    def from_file(  # noqa: C901, PLR0912  # too complex
+        cls: type["Cfg"],
+        fn: str,
+    ) -> "Cfg":
+        """Create a configuration from a file.
+
+        :param fn: The name of the file.
+        :return: The configuration.
+
+        """
         with open(fn, "r") as f:
             text = f.read()
         records = json.loads(text)
         keyvals = list(records.items())
-        c = klass()
+        c = cls()
         for k, v in keyvals:
             if k in ("datasets_to_backup", "filesystems_to_backup", "exclude_patterns"):
                 if hasattr(v, "items"):
@@ -232,38 +357,52 @@ class Cfg(object):
                     dsets = []
                     for dset in v:
                         if isinstance(dset, str):
-                            dsets.append(DatasetToBackup(dset, False, False))
+                            dsets.append(
+                                DatasetToBackup(name=dset, recursive=False, glob=False),
+                            )
                         elif isinstance(dset, dict):
                             dsets.append(
                                 DatasetToBackup(
-                                    dset["name"],
-                                    dset.get("recursive", False),
-                                    dset.get("glob", False),
-                                )
+                                    name=dset["name"],
+                                    recursive=dset.get("recursive", False),
+                                    glob=dset.get("glob", False),
+                                ),
                             )
                         else:
-                            raise ValueError(f"Invalid dataset to backup: {dset}")
+                            msg = f"Invalid dataset to backup: {dset}"
+                            raise ValueError(msg)  # noqa: TRY004
                     c.datasets_to_backup = dsets
                 else:
                     setattr(c, k, v)
-            else:
-                if v:
-                    setattr(c, k, v)
+            elif v:
+                setattr(c, k, v)
         for p in "backup_path backup_server backup_user".split():
             if not getattr(c, p):
-                raise ValueError("%s must be defined in %s" % (p, fn))
+                msg = f"{p} must be defined in {fn}"
+                raise ValueError(msg)
         if not c.datasets_to_backup and not c.filesystems_to_backup:
-            raise ValueError(
+            msg = (
                 "either datasets_to_backup or filesystems_to_backup "
                 f"must be defined and nonempty in {fn}"
+            )
+            raise ValueError(
+                msg,
             )
         return c
 
 
-class SnapshotContext(object):
-    def __init__(
+class SnapshotContext:
+    """A context manager for creating and destroying ZFS snapshots.
+
+    :param datasets_to_backup: The datasets to backup.
+    :param execdate: The execution date.
+    :param tmpdir: The temporary directory.
+
+    """
+
+    def __init__(  # noqa: D107
         self,
-        datasets_to_backup: List[DatasetToBackup],
+        datasets_to_backup: list[DatasetToBackup],
         execdate: str,
         tmpdir: str,
     ) -> None:
@@ -272,7 +411,8 @@ class SnapshotContext(object):
         self.tmpdir = tmpdir
         self.read_special = False
 
-    def datasets_to_backup_sorted_by_mountpoint(self) -> List[Tuple[str, str, str]]:
+    def datasets_to_backup_sorted_by_mountpoint(self) -> list[tuple[str, str, str]]:
+        """Get the datasets to backup sorted by mountpoint."""
         arrange = []
         already = set()
         for d in self.datasets_to_backup:
@@ -280,14 +420,18 @@ class SnapshotContext(object):
                 dd = [
                     row
                     for row in list_props(
-                        d.name.partition("/")[0],
-                        ["name", "mountpoint", "type"],
-                        True,
+                        dataset_name=d.name.partition("/")[0],
+                        props=["name", "mountpoint", "type"],
+                        recursive=True,
                     )
                     if fnmatch.fnmatch(row["name"], d.name)
                 ]
             else:
-                dd = list_props(d.name, ["name", "mountpoint", "type"], d.recursive)
+                dd = list_props(
+                    dataset_name=d.name,
+                    props=["name", "mountpoint", "type"],
+                    recursive=d.recursive,
+                )
             for dataset in dd:
                 name, type_, mp = (
                     dataset["name"],
@@ -300,109 +444,139 @@ class SnapshotContext(object):
                     continue
                 arrange.append((name, type_, mp))
                 already.add(name)
-        return list(sorted(arrange, key=lambda x: x[1] + "/" + x[2]))
+        return sorted(arrange, key=lambda x: x[1] + "/" + x[2])
 
-    def roots(self) -> List[str]:
+    def roots(self) -> list[str]:
+        """Get the root(s) of the datasets to backup."""
         return list(
-            set(
-                os.path.join(d.name.partition("/")[0], ZFS_SNAPSHOT_ROOT)
+            {
+                str(Path(d.name.partition("/")[0]) / ZFS_SNAPSHOT_ROOT)
                 for d in self.datasets_to_backup
-            )
+            },
         )
 
     def snapshot_to_target(self, d: str) -> str:
+        """Get the target of a snapshot.
+
+        :param d: The snapshot.
+        :return: The target of the snapshot.
+
+        """
         return os.path.join(
-            d.partition("/")[0], ZFS_SNAPSHOT_ROOT, d.partition("/")[2]
+            d.partition("/")[0],
+            ZFS_SNAPSHOT_ROOT,
+            d.partition("/")[2],
         ).rstrip("/")
 
     def __enter__(self) -> "SnapshotContext":
+        """Create snapshots and mount datasets."""
         for root in self.roots():
             if not dataset_exists(root):
                 create_dataset(root)
 
-        for d, typ, mp in self.datasets_to_backup_sorted_by_mountpoint():
-            snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
-            target_name = self.snapshot_to_target(d)
+        for dataset_name, _, __ in self.datasets_to_backup_sorted_by_mountpoint():
+            snapshot_name = dataset_name + SNAPSHOT_PREFIX + self.execdate
+            target_name = self.snapshot_to_target(dataset_name)
             if not snapshot_exists(snapshot_name):
                 create_snapshot(snapshot_name)
 
             if not dataset_exists(target_name):
                 clone_snapshot(snapshot_name, target_name)
 
-        for d, typ, mp in self.datasets_to_backup_sorted_by_mountpoint():
-            snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
-            target_name = self.snapshot_to_target(d)
+        for (
+            dataset_name,
+            dataset_type,
+            mountpoint_path,
+        ) in self.datasets_to_backup_sorted_by_mountpoint():
+            snapshot_name = dataset_name + SNAPSHOT_PREFIX + self.execdate
+            target_name = self.snapshot_to_target(dataset_name)
 
-            if typ == TYPE_VOLUME:
+            if dataset_type == TYPE_VOLUME:
                 self.read_special = True
                 source_dev = os.path.join(ZVOL_DEV_ROOT, target_name)
-                target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, d)
+                target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, dataset_name)
                 status("Creating device file %s from %s", target_dev, source_dev)
-                sudo("mkdir", "-p", "--", os.path.dirname(target_dev))
+                sudo("mkdir", "-p", "--", str(Path(target_dev).parent))
 
                 def remove_and_copy(p: str, q: str) -> None:
                     sudo("rm", "-f", q)
                     sudo("cp", "-faL", p, q)
 
                 retrier(
-                    lambda: remove_and_copy(source_dev, target_dev),
+                    lambda source_dev=source_dev, target_dev=target_dev: remove_and_copy(
+                        source_dev,
+                        target_dev,
+                    ),
                     20,
                     0.05,
                 )
             else:
-                mp = self.tmpdir + mp.rstrip("/")
-                if not os.path.exists(mp) or not is_mountpoint(mp):
-                    mount_dataset(target_name, mp)
+                mountpoint_path = self.tmpdir + mountpoint_path.rstrip("/")
+                if not os.path.exists(mountpoint_path) or not is_mountpoint(
+                    mountpoint_path,
+                ):
+                    mount_dataset(target_name, mountpoint_path)
 
         return self
 
-    def __exit__(self, *unused: Any) -> None:
-        for d, typ, mp in reversed(self.datasets_to_backup_sorted_by_mountpoint()):
-            mp = self.tmpdir + mp.rstrip("/")
-            target_name = self.snapshot_to_target(d)
-            if typ == TYPE_VOLUME:
-                target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, d)
-                if os.path.isfile(target_dev):
+    def __exit__(self, *unused: object) -> None:
+        """Unmount and destroy the snapshots."""
+        for dataset_name, dataset_type, mountpoint_path in reversed(
+            self.datasets_to_backup_sorted_by_mountpoint(),
+        ):
+            mountpoint_path_tmpdir = self.tmpdir + mountpoint_path.rstrip("/")
+            target_name = self.snapshot_to_target(dataset_name)
+            if dataset_type == TYPE_VOLUME:
+                target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, dataset_name)
+                if Path(target_dev).is_file():
                     status("Deleting device file %s", target_dev)
                     sudo("rm", "-f", target_dev)
-            else:
-                if is_mountpoint(mp):
-                    unmount_dataset(target_name)
+            elif is_mountpoint(mountpoint_path_tmpdir):
+                unmount_dataset(target_name)
 
         for root in self.roots():
             if dataset_exists(root):
                 destroy_dataset_recursively(root)
 
-        for d, typ, mp in reversed(self.datasets_to_backup_sorted_by_mountpoint()):
-            snapshot_name = d + SNAPSHOT_PREFIX + self.execdate
+        for dataset_name, _, __ in reversed(
+            self.datasets_to_backup_sorted_by_mountpoint(),
+        ):
+            snapshot_name = dataset_name + SNAPSHOT_PREFIX + self.execdate
             if snapshot_exists(snapshot_name):
                 destroy_dataset_recursively(snapshot_name)
 
 
-class BindMountContext(object):
-    def __init__(self, filesystems_to_backup: List[str], tmpdir: str) -> None:
+class BindMountContext:
+    """Context manager for bind mounting file systems."""
+
+    def __init__(  # noqa: D107
+        self,
+        filesystems_to_backup: list[str],
+        tmpdir: str,
+    ) -> None:
         self.filesystems_to_backup = filesystems_to_backup
         self.tmpdir = tmpdir
 
-    def fsmounts(self) -> Generator[Tuple[str, str], None, None]:
+    def fsmounts(self) -> Generator[tuple[str, str], None, None]:
+        """Get the file systems to mount."""
         for d in sorted(self.filesystems_to_backup):
-            yield (d, os.path.join(self.tmpdir + d))
+            yield (d, str(Path(self.tmpdir) / d))
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> None:  # noqa: D105
         needsmount = []
         for d, mp in self.fsmounts():
-            if not os.path.exists(mp) or not is_mountpoint(mp):
+            if not Path(mp).exists() or not is_mountpoint(mp):
                 needsmount.append((mp, d))
-        for mp, d in list(sorted(needsmount)):
+        for mp, d in sorted(needsmount):
             status("Creating %s", mp)
-            if not os.path.exists(mp):
+            if not Path(mp).exists():
                 sudo("mkdir", "-m", "700", "-p", "--", mp)
             if not is_mountpoint(mp):
                 status("Mounting %s onto %s", d, mp)
                 sudo("mount", "--bind", d, mp)
 
-    def __exit__(self, *unused: Any) -> None:
-        for d, mp in reversed(list(self.fsmounts())):
+    def __exit__(self, *unused: object) -> None:  # noqa: D105
+        for _d, mp in reversed(list(self.fsmounts())):
             if is_mountpoint(mp):
                 try:
                     status("Unmounting file system %s", mp)
@@ -413,19 +587,27 @@ class BindMountContext(object):
                     continue
 
 
-class TmpDirContext(object):
-    def __init__(self, tmpdir: str) -> None:
+class TmpDirContext:
+    """Context manager for creating and removing a temporary directory."""
+
+    def __init__(self, tmpdir: str) -> None:  # noqa: D107
         self.tmpdir = tmpdir
 
     def __enter__(self) -> None:
+        """Create temporary directory."""
         sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
 
-    def __exit__(self, *unused: Any) -> None:
+    def __exit__(self, *_: object) -> None:
+        """Remove the temporary directory if nothing is mounted into it.
+
+        Raise an exception if file systems are still mounted on it.
+        """
         if call(["findmnt", self.tmpdir]) == 0:
-            raise Exception(
+            msg = (
                 "Will not remove anything under the temporary "
                 "directory since file systems are still mounted on it."
             )
+            raise RuntimeError(msg)
 
         try:
             status("Removing %s", self.tmpdir)
@@ -441,7 +623,14 @@ class TmpDirContext(object):
             raise
 
 
-def check_connectivity(cmd: List[str]) -> None:
+def check_connectivity(cmd: list[str]) -> None:
+    """Check connectivity to a host.
+
+    Retries the command 10 times with a 3 second sleep in between until it succeeds.
+
+    :param cmd: The command to check with for connectivity.
+
+    """
     for _ in range(10):
         with open(os.devnull, "rb") as devnull:
             p = subprocess.run(
@@ -450,6 +639,7 @@ def check_connectivity(cmd: List[str]) -> None:
                 stderr=subprocess.STDOUT,
                 stdin=devnull,
                 timeout=10,
+                check=False,
             )
         if p.returncode != 0:
             time.sleep(3)
@@ -458,18 +648,23 @@ def check_connectivity(cmd: List[str]) -> None:
     p.check_returncode()
 
 
-def nc(host: str) -> List[str]:
+def nc(host: str) -> list[str]:
+    """Return a netcat command to check connectivity to a host."""
     return ["nc", "-w", "45", host, "22"]
 
 
-class VmBridgeContext(object):
-    def __init__(self, vm_name: str, host: str) -> None:
+class VmBridgeContext:
+    """Context manager for connecting to a VM via a bridge."""
+
+    def __init__(self, vm_name: str, host: str) -> None:  # noqa: D107
         self.host = host
         self.vm_name = vm_name
         self.was_running_before = False
 
     def __enter__(self) -> None:
-        def wrap(cmd: List[str]) -> List[str]:
+        """Check things and set BORG_RSH envvar."""
+
+        def wrap(cmd: list[str]) -> list[str]:
             return [
                 "qvm-run",
                 "--nogui",
@@ -482,7 +677,8 @@ class VmBridgeContext(object):
         if "Running" in output("qvm-ls", self.vm_name):
             self.was_running_before = True
         if "yes" not in output(*wrap(["echo", "yes"])):
-            raise RuntimeError("VM %s not functional" % self.vm_name)
+            msg = f"VM {self.vm_name} not functional"
+            raise RuntimeError(msg)
 
         check_connectivity(cmd=wrap(nc(self.host)))
 
@@ -491,21 +687,25 @@ class VmBridgeContext(object):
             opts_list.extend(["-o", opt])
 
         os.environ["BORG_RSH"] = "borg-offsite-backup-helper " + " ".join(
-            shlex.quote(x) for x in opts_list + [self.vm_name]
+            shlex.quote(x) for x in [*opts_list, self.vm_name]
         )
 
-    def __exit__(self, *ignored: Any) -> None:
+    def __exit__(self, *_: object) -> None:
+        """Unset BORG_RSH envvar, optionally shutdown qvm."""
         if "BORG_RSH" in os.environ:
             del os.environ["BORG_RSH"]
         if not self.was_running_before:
             cc(["qvm-shutdown", "--wait", self.vm_name])
 
 
-class NoBridgeContext(object):
-    def __init__(self, host: str) -> None:
+class NoBridgeContext:
+    """Context manager for connecting to a host directly."""
+
+    def __init__(self, host: str) -> None:  # noqa: D107
         self.host = host
 
     def __enter__(self) -> None:
+        """Check connection and set BORG_RSH envvar."""
         check_connectivity(cmd=nc(self.host))
 
         opts_list = []
@@ -514,14 +714,19 @@ class NoBridgeContext(object):
 
         os.environ["BORG_RSH"] = "ssh " + " ".join(shlex.quote(x) for x in opts_list)
 
-    def __exit__(self, *ignored: Any) -> None:
+    def __exit__(self, *_: object) -> None:
+        """Unset BORG_RSH environment variable."""
         if "BORG_RSH" in os.environ:
             del os.environ["BORG_RSH"]
 
 
 @contextlib.contextmanager
-def CdContext(path: str) -> Generator[str, None, None]:
-    prev_cwd = os.getcwd()
+def change_directory_context(path: str) -> Generator[str, None, None]:
+    """Change the current working directory.
+
+    :param path: The path to change to.
+    """
+    prev_cwd = Path.cwd()
     os.chdir(path)
     try:
         yield path
@@ -530,41 +735,61 @@ def CdContext(path: str) -> Generator[str, None, None]:
 
 
 @contextlib.contextmanager
-def DummyContext(*unused: Any) -> Generator[str, None, None]:
+def dummy_context(*_: object) -> Generator[str, None, None]:  # noqa: D103
     yield "DummyContext"
 
 
 def is_locked() -> bool:
+    """Check if the repository is locked by borg."""
     return bool(
         glob.glob(
             os.path.join(
-                os.path.expanduser("~"), ".cache", "borg", "*", "lock.exclusive"
-            )
-        )
+                os.path.expanduser("~"),
+                ".cache",
+                "borg",
+                "*",
+                "lock.exclusive",
+            ),
+        ),
     )
 
 
 def unlock() -> None:
+    """Unlock the borg repository via break-lock."""
     status("Unlocking repository")
-    subprocess.check_call(echo + ["borg", "break-lock"])
+    subprocess.check_call([*echo, "borg", "break-lock"])
 
 
-def run(
+def run(  # noqa: PLR0913
     config: Cfg,
     execdate: str,
     compression: str,
     subcommand: str,
+    *,
     read_special: bool,
-    args: List[str],
+    args: list[str],
 ) -> int:
+    """Run a borg command.
+
+    :param config: Configuration.
+    :param execdate: Execution date.
+    :param compression: Compression algorithm.
+    :param subcommand: The borg subcommand.
+    :param read_special: Whether to read special files.
+    :param args: Additional arguments.
+    :return: The return code of the command.
+
+    """
     if is_locked():
         unlock()
 
     if subcommand == "create":
+        hostname = os.uname().nodename
         with tempfile.TemporaryDirectory(
-            prefix="borg-offsite-backup", suffix="XXXXXXXXXX"
+            prefix="borg-offsite-backup",
+            suffix="XXXXXXXXXX",
         ) as excludedir:
-            excludefn = os.path.join(excludedir, "exclude")
+            excludefn = str(Path(excludedir) / "exclude")
             with open(excludefn, "w") as excludefile:
                 excludefile.write("\n".join(config.exclude_patterns))
                 excludefile.flush()
@@ -575,34 +800,41 @@ def run(
                 params += ["--sparse"]
             if read_special:
                 params += ["--read-special"]
-            cmd = (
-                [
-                    "time",
-                    "nice",
-                    "ionice",
-                    "-c3",
-                    # "strace",
-                    # "-ff",
-                    # "-efile",
-                    # "-s2048",
-                    "borg",
-                    "create",
-                    "--exclude-caches",
-                    "--keep-exclude-tags",
-                    "--exclude-from",
-                    excludefn,
-                    "--debug",
-                    "--compression",
-                    compression,
-                ]
-                + params
-                + args
-                + ["::" + execdate, "."]
-            )
-            ret = subprocess.call(echo + cmd)
+            cmd = [
+                "time",
+                "nice",
+                "ionice",
+                "-c3",
+                # "strace",
+                # "-ff",
+                # "-efile",
+                # "-s2048",
+                "borg",
+                "create",
+                "--exclude-caches",
+                "--keep-exclude-tags",
+                "--exclude-from",
+                excludefn,
+                "--debug",
+                "--compression",
+                compression,
+                *params,
+                *args,
+                "::" + execdate,
+                ".",
+            ]
+            if dry_run:
+                status("Would run:", " ".join(echo + cmd))
+                ret = 0
+            else:
+                ret = subprocess.call(echo + cmd)
     else:
-        cmd = ["borg", subcommand] + args
-        ret = subprocess.call(echo + cmd)
+        cmd = ["borg", subcommand, *args]
+        if dry_run:
+            status("Would run:", " ".join(echo + cmd))
+            ret = 0
+        else:
+            ret = subprocess.call(echo + cmd)
     if subcommand == "create" and ret == 1:
         # This is just a warning.
         ret = 0
@@ -610,6 +842,14 @@ def run(
 
 
 def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
+    """Run borg prune.
+
+    :param keep_daily: Number of daily backups to keep.
+    :param keep_weekly: Number of weekly backups to keep.
+    :param keep_monthly: Number of monthly backups to keep.
+    :return: The return code of the command.
+
+    """
     if is_locked():
         unlock()
     params = ["--progress"] if not os.environ.get("QUIET") else []
@@ -620,6 +860,8 @@ def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
         "-c3",
         "borg",
         "prune",
+        "--glob-archives",
+        f"{os.uname().nodename}-*",
         "--stats",
         "--keep-daily",
         str(keep_daily),
@@ -627,31 +869,45 @@ def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
         str(keep_weekly),
         "--keep-monthly",
         str(keep_monthly),
-    ] + params
+        *params,
+    ]
+    if dry_run:
+        status("Would run:", " ".join(echo + cmd))
+        return 0
     return subprocess.call(echo + cmd)
 
 
-def run_collector(promfile: str, telemetry_timeout: int) -> None:
+def run_collector(promfile: str, telemetry_timeout: int) -> None:  # noqa: C901
+    """Run the telemetry collector.
+
+    :param promfile: The Prometheus file.
+    :param telemetry_timeout: The timeout for the telemetry.
+
+    """
+
     def r2t(x: str) -> float:
         return cast(float, dateutil.parser.parse(x).timestamp())
 
-    Metric = collections.namedtuple("Metric", ["name", "labels", "value"])
+    class Metric(NamedTuple):
+        name: str
+        labels: dict
+        value: object
 
     def repr_metric(x: Metric) -> str:
         return "borg_" + str(x.name) + fmtlbs(x.labels) + " " + str(x.value)
 
-    def fmtlbs(ls: Dict[str, str]) -> str:
+    def fmtlbs(ls: dict[str, str]) -> str:
         if not ls:
             return ""
         lbs = "{"
         for n, (k, v) in enumerate(ls.items()):
-            lbs += '%s="%s"' % (k, v)
+            lbs += f'{k}="{v}"'
             if n < len(ls.items()) - 1:
                 lbs += ","
         lbs += "}"
         return lbs
 
-    metrics: List[Metric] = []
+    metrics: list[Metric] = []
     p = metrics.append
 
     start = time.time()
@@ -676,7 +932,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
         stats: ArchiveStats
 
     class ArchiveInfo(TypedDict):
-        archives: List[ArchiveDetail]
+        archives: list[ArchiveDetail]
         repository: Repository
 
     data = cast(
@@ -685,7 +941,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             subprocess.check_output(
                 [sys.executable, sys.argv[0], "info", "--last=1000", "--json"],
                 timeout=telemetry_timeout,
-            ).decode("utf-8")
+            ).decode("utf-8"),
         ),
     )
     p(
@@ -693,7 +949,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             name="repository_last_modified_timestamp_seconds",
             labels={},
             value=r2t(data["repository"]["last_modified"]),
-        )
+        ),
     )
 
     for arcdata in data["archives"]:
@@ -705,14 +961,14 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
                 name="archive_start_timestamp_seconds",
                 labels=lbs,
                 value=r2t(arcdata["start"]),
-            )
+            ),
         )
         p(
             Metric(
                 name="archive_end_timestamp_seconds",
                 labels=lbs,
                 value=r2t(arcdata["end"]),
-            )
+            ),
         )
 
         archivestats = arcdata["stats"]
@@ -727,7 +983,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
                     ),
                     labels=lbs,
                     value=v,
-                )
+                ),
             )
 
     end = time.time()
@@ -737,18 +993,19 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
         if promfile in ["/dev/stdout", "-"]:
             f = sys.stdout
         else:
-            f = open(promfile + "." + str(os.getpid()), "w")
+            f = open(promfile + "." + str(os.getpid()), "w")  # noqa: SIM115
         for m in metrics:
-            f.write((repr_metric(m) + "\n"))
+            f.write(repr_metric(m) + "\n")
         if f != sys.stdout:
             f.flush()
-            os.rename(promfile + "." + str(os.getpid()), promfile)
+            Path(promfile + "." + str(os.getpid())).rename(promfile)
     finally:
         if f != sys.stdout:
             f.close()
 
 
-def parse_args(args: List[str]) -> Tuple[argparse.Namespace, List[str]]:
+def parse_args(args: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Parse cmd args."""
     p = argparse.ArgumentParser()
     p.add_argument(
         "--telemetry-file",
@@ -766,25 +1023,35 @@ def parse_args(args: List[str]) -> Tuple[argparse.Namespace, List[str]]:
         default="/etc/borg-offsite-backup.conf",
     )
     p.add_argument(
+        "--dry-run",
+        help="do not actually run any commands",
+    )
+    p.add_argument(
         "subcommand",
         help="borg execution mode",
     )
     return p.parse_known_args(args)
 
 
-def main(args: List[str]) -> None:
+def main(args: list[str]) -> None:  # noqa: C901
+    """Run main function."""
     global terminated
 
     if "--help" in args or "-h" in args or "-?" in args:
-        sys.exit(subprocess.call(["borg"] + args))
+        sys.exit(subprocess.call(["borg", *args]))
 
     opts, borg_args = parse_args(args)
 
     signal.signal(signal.SIGTERM, sigterm)
 
-    def fatal(exit: int, msg: str, *more: str) -> None:
+    def fatal(exit_code: int, msg: str, *more: str) -> None:
         status(msg, *more)
-        sys.exit(exit)
+        sys.exit(exit_code)
+
+    if opts.dry_run:
+        global dry_run
+        dry_run = True
+        status("Dry run enabled.")
 
     if opts.subcommand == "telemetry" and not opts.telemetry_file:
         fatal(
@@ -799,30 +1066,30 @@ def main(args: List[str]) -> None:
         fatal(os.EX_USAGE, "Fatal error: " + str(e))
 
     execdate = output("date", "+%Y-%m-%d").strip()
-    os.environ["BORG_KEY_FILE"] = os.path.expanduser("~/.borg-offsite-backup.key")
+    os.environ["BORG_KEY_FILE"] = str(Path("~/.borg-offsite-backup.key").expanduser())
     os.environ["BORG_PASSPHRASE"] = ""
     os.environ["BORG_REPO"] = "{backup_user}@{backup_server}:{backup_path}".format(
-        **c.as_dict()
+        **c.as_dict(),
     )
     if "TMPDIR" not in os.environ:
-        os.environ["TMPDIR"] = "/var/tmp"
+        os.environ["TMPDIR"] = tempfile.gettempdir()
     backup_root = "/run/borg-offsite-backup"
 
-    backup_contexts: List[Callable[[], Any]] = []
+    backup_contexts: list[Callable[[], Any]] = []
     if opts.subcommand in ["create", "cleanup"]:
         backup_contexts.append(lambda: TmpDirContext(backup_root))
         if c.datasets_to_backup:
             backup_contexts.append(
-                lambda: SnapshotContext(c.datasets_to_backup, execdate, backup_root)
+                lambda: SnapshotContext(c.datasets_to_backup, execdate, backup_root),
             )
         if c.filesystems_to_backup:
             backup_contexts.append(
-                lambda: BindMountContext(c.filesystems_to_backup, backup_root)
+                lambda: BindMountContext(c.filesystems_to_backup, backup_root),
             )
         backup_contexts.append(
-            lambda: CdContext(backup_root)
+            lambda: change_directory_context(backup_root)
             if opts.subcommand == "create"
-            else DummyContext()
+            else dummy_context(),
         )
 
     connect_context: Any = (
@@ -844,12 +1111,12 @@ def main(args: List[str]) -> None:
                     None
                     if opts.subcommand in ["cleanup", "telemetry"]
                     else run(
-                        c,
-                        execdate,
-                        c.compression,
-                        opts.subcommand,
-                        read_special,
-                        borg_args,
+                        config=c,
+                        execdate=execdate,
+                        compression=c.compression,
+                        subcommand=opts.subcommand,
+                        read_special=read_special,
+                        args=borg_args,
                     )
                 )
             if terminated and retval:
@@ -870,12 +1137,11 @@ def main(args: List[str]) -> None:
         ):
             run_collector(opts.telemetry_file, opts.telemetry_timeout)
 
-    for val, proc in [
+    for val, _ in [
         (retval, "Backup"),
         (pruneretval, "Prune"),
     ]:
         if val not in (0, None):
-            print("%s failed.  Exiting with status %s" % (proc, val), file=sys.stderr)
             sys.exit(val)
 
 
