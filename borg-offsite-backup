@@ -739,10 +739,16 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             f = sys.stdout
         else:
             if os.path.sep not in promfile:
-                cmd = "cat /proc/$(pgrep -f /usr/bin/node_exporter | head -1)/cmdline | tr '\\0' '\\n' | grep -- --collector.textfile.directory= | sed 's/^--collector.textfile.directory=//'"
+                cmd = "cat /proc/$(pgrep -f ^/usr/bin/node_exporter | head -1 | cut -d ' ' -f 1)/cmdline | tr '\\0' '\\n' | grep -- --collector.textfile.directory= | sed 's/^--collector.textfile.directory=//'"
                 directory = subprocess.check_output(
                     ["bash", "-c", cmd], text=True
                 ).rstrip("\n")
+                assert directory, (
+                    f"specified --telemetry-file {promfile}"
+                    " must be an absolute path because Node Exporter"
+                    " is not running and therefore we cannot detect"
+                    " the correct textfile collector path"
+                )
                 promfile = os.path.join(directory, promfile)
             f = open(promfile + "." + str(os.getpid()), "w")
         for m in metrics:
