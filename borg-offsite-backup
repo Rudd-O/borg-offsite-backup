@@ -58,6 +58,11 @@ def status(string: str, *args: Any) -> None:
         sys.stderr.flush()
 
 
+def sudo_ignore_dryrun(*cmd: str, **kwargs: Any) -> None:  # noqa: ANN401
+    sudo_or_not = [] if os.getuid() == 0 else ["sudo"]
+    cc((sudo_or_not) + list(cmd), **kwargs)
+
+
 def sudo(*cmd: str, **kwargs: Any) -> None:  # noqa: ANN401
     """Run a command with sudo (if not already root)."""
     sudo_or_not = [] if os.getuid() == 0 else ["sudo"]
@@ -67,12 +72,16 @@ def sudo(*cmd: str, **kwargs: Any) -> None:  # noqa: ANN401
     cc((sudo_or_not) + list(cmd), **kwargs)
 
 
+def output_ignore_dryrun(*cmd: Any, **kwargs: Any) -> str:  # noqa: ANN401
+    return subprocess.check_output(cmd, text=True, **kwargs)
+
+
 def output(*cmd: Any, **kwargs: Any) -> str:  # noqa: ANN401
     """Run a command and return the output."""
     if dry_run:
         status(f"Would run: {' '.join(cmd)}")
         return ""
-    return subprocess.check_output(cmd, text=True, **kwargs)
+    return output_ignore_dryrun(*cmd, **kwargs)
 
 
 def sudoutput(*cmd: Any) -> str:  # noqa: ANN401
@@ -132,14 +141,14 @@ def list_props(
     )
     return [
         dict(zip(props, s.split("\t"), strict=False))
-        for s in output(*cmd).splitlines()
+        for s in output_ignore_dryrun(*cmd).splitlines()
         if s.strip()
     ]
 
 
 def create_dataset(dataset: str) -> None:
     """Create a ZFS dataset."""
-    sudo(
+    sudo_ignore_dryrun(
         "zfs",
         "create",
         "-o",
@@ -205,7 +214,7 @@ def create_snapshot(snapshot_name: str) -> None:
 
     """
     status(f"Snapshotting current {snapshot_name}")
-    sudo("zfs", "snapshot", snapshot_name)
+    sudo_ignore_dryrun("zfs", "snapshot", snapshot_name)
 
 
 def clone_snapshot(snapshot_name: str, dataset_name: str) -> None:
@@ -216,7 +225,7 @@ def clone_snapshot(snapshot_name: str, dataset_name: str) -> None:
 
     """
     status(f"Cloning {snapshot_name} to {dataset_name}")
-    sudo(
+    sudo_ignore_dryrun(
         "zfs",
         "clone",
         "-p",
@@ -233,7 +242,7 @@ def mount_dataset(dataset_name: str, mountpoint: str) -> None:
 
     """
     status(f"Mounting {dataset_name} onto {mountpoint}")
-    sudo("zfs", "set", "mountpoint=" + mountpoint, dataset_name)
+    sudo_ignore_dryrun("zfs", "set", "mountpoint=" + mountpoint, dataset_name)
 
 
 def unmount_dataset(dataset_name: str) -> None:
@@ -243,7 +252,7 @@ def unmount_dataset(dataset_name: str) -> None:
 
     """
     status(f"Unmounting dataset {dataset_name}")
-    sudo("zfs", "set", "mountpoint=none", dataset_name)
+    sudo_ignore_dryrun("zfs", "set", "mountpoint=none", dataset_name)
 
 
 def destroy_dataset_recursively(dataset: str) -> None:
@@ -253,7 +262,7 @@ def destroy_dataset_recursively(dataset: str) -> None:
 
     """
     status(f"Destroying {dataset} recursively")
-    sudo("zfs", "destroy", "-r", dataset)
+    sudo_ignore_dryrun("zfs", "destroy", "-r", dataset)
 
 
 @contextlib.contextmanager
@@ -352,7 +361,7 @@ class Cfg:
         for k, v in keyvals:
             if k in ("datasets_to_backup", "filesystems_to_backup", "exclude_patterns"):
                 if hasattr(v, "items"):
-                    v = list(v.keys())
+                    v = list(v.keys())  # noqa: PLW2901
                 if k == "datasets_to_backup":
                     dsets = []
                     for dset in v:
@@ -406,13 +415,19 @@ class SnapshotContext:
         execdate: str,
         tmpdir: str,
     ) -> None:
-        self.datasets_to_backup = datasets_to_backup
+        self.datasets_to_backup: list[DatasetToBackup] = datasets_to_backup
         self.execdate = execdate
         self.tmpdir = tmpdir
         self.read_special = False
 
     def datasets_to_backup_sorted_by_mountpoint(self) -> list[tuple[str, str, str]]:
-        """Get the datasets to backup sorted by mountpoint."""
+        """Get the datasets to backup sorted by mountpoint.
+
+        Returns:
+            list[tuple[str, str, str]]:
+                A list of tuples with the dataset name, type and mountpoint path.
+
+        """
         arrange = []
         already = set()
         for d in self.datasets_to_backup:
@@ -496,7 +511,7 @@ class SnapshotContext:
                 source_dev = os.path.join(ZVOL_DEV_ROOT, target_name)
                 target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, dataset_name)
                 status("Creating device file %s from %s", target_dev, source_dev)
-                sudo("mkdir", "-p", "--", str(Path(target_dev).parent))
+                sudo_ignore_dryrun("mkdir", "-p", "--", str(Path(target_dev).parent))
 
                 def remove_and_copy(p: str, q: str) -> None:
                     sudo("rm", "-f", q)
@@ -530,7 +545,7 @@ class SnapshotContext:
                 target_dev = self.tmpdir + os.path.join(ZVOL_DEV_ROOT, dataset_name)
                 if Path(target_dev).is_file():
                     status("Deleting device file %s", target_dev)
-                    sudo("rm", "-f", target_dev)
+                    sudo_ignore_dryrun("rm", "-f", target_dev)
             elif is_mountpoint(mountpoint_path_tmpdir):
                 unmount_dataset(target_name)
 
@@ -570,17 +585,17 @@ class BindMountContext:
         for mp, d in sorted(needsmount):
             status("Creating %s", mp)
             if not Path(mp).exists():
-                sudo("mkdir", "-m", "700", "-p", "--", mp)
+                sudo_ignore_dryrun("mkdir", "-m", "700", "-p", "--", mp)
             if not is_mountpoint(mp):
                 status("Mounting %s onto %s", d, mp)
-                sudo("mount", "--bind", d, mp)
+                sudo_ignore_dryrun("mount", "--bind", d, mp)
 
     def __exit__(self, *unused: object) -> None:  # noqa: D105
         for _d, mp in reversed(list(self.fsmounts())):
             if is_mountpoint(mp):
                 try:
                     status("Unmounting file system %s", mp)
-                    sudo("umount", mp)
+                    sudo_ignore_dryrun("umount", mp)
                 except subprocess.CalledProcessError as exc:
                     status("Unmounting file system %s failed: %s", mp, exc)
                     time.sleep(1)
@@ -595,7 +610,7 @@ class TmpDirContext:
 
     def __enter__(self) -> None:
         """Create temporary directory."""
-        sudo("mkdir", "-m", "700", "-p", "--", self.tmpdir)
+        sudo_ignore_dryrun("mkdir", "-m", "700", "-p", "--", self.tmpdir)
 
     def __exit__(self, *_: object) -> None:
         """Remove the temporary directory if nothing is mounted into it.
@@ -612,7 +627,7 @@ class TmpDirContext:
         try:
             status("Removing %s", self.tmpdir)
             qtmp = shlex.quote(self.tmpdir)
-            sudo(
+            sudo_ignore_dryrun(
                 "bash",
                 "-c",
                 f"find {qtmp} -depth -type d -print0 | xargs -0 rmdir -v --",
