@@ -779,6 +779,7 @@ def run(  # noqa: PLR0913
     config: Cfg,
     execdate: str,
     compression: str,
+    snapshot_contexts: list[SnapshotContext],
     subcommand: str,
     *,
     read_special: bool,
@@ -789,6 +790,7 @@ def run(  # noqa: PLR0913
     :param config: Configuration.
     :param execdate: Execution date.
     :param compression: Compression algorithm.
+    :param snapshot_contexts: Snapshot contexts.
     :param subcommand: The borg subcommand.
     :param read_special: Whether to read special files.
     :param args: Additional arguments.
@@ -810,7 +812,14 @@ def run(  # noqa: PLR0913
                 excludefile.flush()
             params = ["--progress"] if not os.environ.get("QUIET") else []
             if "comment" in output("borg", "create", "--help"):
-                params += ["--comment", "global"]
+                _snap_datasets: list[dict[str, str]] = []
+                for _snap in snapshot_contexts:
+                    for snap_ds in _snap.datasets_to_backup_sorted_by_mountpoint():
+                        _snap_datasets.extend(
+                            [{"dataset_name": snap_ds[0], "mountpoint": snap_ds[2]}],
+                        )
+                _comment = json.dumps(_snap_datasets, sort_keys=True, default=str)
+                params += ["--comment", _comment]
             if "--sparse" in output("borg", "create", "--help"):
                 params += ["--sparse"]
             if read_special:
@@ -835,7 +844,7 @@ def run(  # noqa: PLR0913
                 compression,
                 *params,
                 *args,
-                "::" + execdate,
+                f"::{hostname}_{execdate}",
                 ".",
             ]
             if dry_run:
@@ -1129,6 +1138,7 @@ def main(args: list[str]) -> None:  # noqa: C901
                         config=c,
                         execdate=execdate,
                         compression=c.compression,
+                        snapshot_contexts=snapshot_contexts,
                         subcommand=opts.subcommand,
                         read_special=read_special,
                         args=borg_args,
