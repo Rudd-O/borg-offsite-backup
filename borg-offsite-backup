@@ -8,6 +8,7 @@ import fnmatch
 import glob
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -801,7 +802,6 @@ def run(  # noqa: PLR0913
         unlock()
 
     if subcommand == "create":
-        hostname = os.uname().nodename
         with tempfile.TemporaryDirectory(
             prefix="borg-offsite-backup",
             suffix="XXXXXXXXXX",
@@ -818,8 +818,10 @@ def run(  # noqa: PLR0913
                         _snap_datasets.extend(
                             [{"dataset_name": snap_ds[0], "mountpoint": snap_ds[2]}],
                         )
-                _comment = json.dumps(_snap_datasets, sort_keys=True, default=str)
-                params += ["--comment", _comment]
+                _comment = re.escape(
+                    json.dumps(_snap_datasets, sort_keys=True, default=str),
+                )
+                params += ["--comment", f"'{_comment}'"]
             if "--sparse" in output("borg", "create", "--help"):
                 params += ["--sparse"]
             if read_special:
@@ -844,7 +846,7 @@ def run(  # noqa: PLR0913
                 compression,
                 *params,
                 *args,
-                f"::{hostname}_{execdate}",
+                "::{{hostname}}_{{now}}",
                 ".",
             ]
             if dry_run:
