@@ -54,7 +54,7 @@ def sigterm(*_: Any) -> None:
 
 def status(string: str, *args: Any) -> None:
     if args:
-        string = string % args
+        string = f"{string} {args}"
     if hasattr(sys.stderr, "flush"):
         sys.stderr.flush()
 
