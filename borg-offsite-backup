@@ -850,7 +850,7 @@ def run(  # noqa: PLR0913
                 ".",
             ]
             if dry_run:
-                status("Would run:", " ".join(echo + cmd))
+                status("Would run:", " ".join(cmd))
                 ret = 0
             else:
                 ret = subprocess.call(echo + cmd)
