@@ -443,15 +443,23 @@ class TmpDirContext(object):
 
 def check_connectivity(cmd: List[str]) -> None:
     for _ in range(10):
-        with open(os.devnull, "rb") as devnull:
-            p = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=devnull,
-                timeout=10,
-            )
+        p = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            input="\n",
+            timeout=10,
+            text=True,
+        )
+        ssh_found = "SSH-" in p.stdout
         if p.returncode != 0:
+            status(f"Check for connectivity failed with error {p.returncode}")
+            time.sleep(3)
+        elif not ssh_found:
+            status(
+                "Check for connectivity did not find an SSH server (stdout: %r)",
+                p.stdout,
+            )
             time.sleep(3)
         else:
             break
@@ -459,7 +467,7 @@ def check_connectivity(cmd: List[str]) -> None:
 
 
 def nc(host: str) -> List[str]:
-    return ["nc", "-w", "45", host, "22"]
+    return ["nc", "--no-shutdown", "-w", "45", host, "22"]
 
 
 class VmBridgeContext(object):
