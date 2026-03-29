@@ -3,6 +3,7 @@
 import argparse
 import collections
 import contextlib
+import datetime
 import fnmatch
 import glob
 import json
@@ -200,6 +201,7 @@ class Cfg(object):
     backup_server: str = ""
     compression = "auto,zstd"
     backup_user: str = ""
+    prune_on_days: Optional[list[int]] = None
     keep_daily = 7
     keep_weekly = 4
     keep_monthly = 12
@@ -208,6 +210,7 @@ class Cfg(object):
         self.filesystems_to_backup: List[str] = []
         self.datasets_to_backup: List[DatasetToBackup] = []
         self.exclude_patterns: List[str] = []
+        self.prune_on_days = []
 
     def as_dict(self) -> Dict[str, Any]:
         d = {}
@@ -639,6 +642,22 @@ def run_prune(keep_daily: int, keep_weekly: int, keep_monthly: int) -> int:
     return subprocess.call(echo + cmd)
 
 
+def run_compact() -> int:
+    if is_locked():
+        unlock()
+    params = ["--progress"] if not os.environ.get("QUIET") else []
+    cmd = [
+        "time",
+        "nice",
+        "ionice",
+        "-c3",
+        "borg",
+        "prune",
+        "--info",
+    ] + params
+    return subprocess.call(echo + cmd)
+
+
 def run_collector(promfile: str, telemetry_timeout: int) -> None:
     def r2t(x: str) -> float:
         return cast(float, dateutil.parser.parse(x).timestamp())
@@ -879,11 +898,29 @@ def main(args: List[str]) -> None:
                 # Now wait so the service manager does not kill our cleanup right away.
                 time.sleep(1)
 
-        pruneretval = (
-            run_prune(c.keep_daily, c.keep_weekly, c.keep_monthly)
-            if (opts.subcommand == "create" and not terminated)
-            else None
+        time_to_prune = (
+            isinstance(c.prune_on_days, list)
+            and datetime.datetime.today().day in c.prune_on_days
         )
+        if time_to_prune:
+            pruneretval = (
+                run_prune(c.keep_daily, c.keep_weekly, c.keep_monthly)
+                if (opts.subcommand == "create" and not terminated and retval == 0)
+                else None
+            )
+            compactretval = (
+                run_compact()
+                if (
+                    opts.subcommand == "create"
+                    and not terminated
+                    and retval == 0
+                    and pruneretval == 0
+                )
+                else None
+            )
+        else:
+            pruneretval = None
+            compactretval = None
 
         if (
             opts.telemetry_file
@@ -895,6 +932,7 @@ def main(args: List[str]) -> None:
     for val, proc in [
         (retval, "Backup"),
         (pruneretval, "Prune"),
+        (compactretval, "Compact"),
     ]:
         if val not in (0, None):
             print("%s failed.  Exiting with status %s" % (proc, val), file=sys.stderr)
