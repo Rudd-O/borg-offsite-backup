@@ -61,7 +61,8 @@ We also recommend you store this configuration alongside the key in
 your key backup.
 
 Sample configuration `/etc/borg-offsite-backup.conf` for a Qubes OS
-dom0 that has ZFS volumes backing the system's qubes:
+dom0 that has ZFS volumes backing the system's qubes, and compacts
+/ prunes on the 14th and the 28th of the month:
 
 ```
 {
@@ -96,6 +97,7 @@ dom0 that has ZFS volumes backing the system's qubes:
         "/boot",
         "/boot/efi"
     ],
+    "prune_on_days": [14, 28],
     "keep_daily": 7,
     "keep_monthly": 3,
     "keep_weekly": 2

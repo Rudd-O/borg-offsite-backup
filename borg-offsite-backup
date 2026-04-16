@@ -68,7 +68,7 @@ def sudo(*cmd: str, **kwargs: Any) -> None:
 
 
 def output(*cmd: str, **kwargs: Any) -> str:
-    return cast(str, subprocess.check_output(cmd, universal_newlines=True, **kwargs))
+    return subprocess.check_output(cmd, universal_newlines=True, **kwargs)
 
 
 def sudoutput(*cmd: str) -> str:
@@ -213,7 +213,7 @@ class Cfg(object):
         self.prune_on_days = []
 
     def as_dict(self) -> Dict[str, Any]:
-        d = {}
+        d: Dict[str, Any] = {}
         for k in dir(self):
             v = getattr(self, k)
             if not callable(v):
@@ -221,18 +221,18 @@ class Cfg(object):
         return d
 
     @classmethod
-    def from_file(klass: Type["Cfg"], fn: str) -> "Cfg":
+    def from_file(cls: Type["Cfg"], fn: str) -> "Cfg":
         with open(fn, "r") as f:
             text = f.read()
         records = json.loads(text)
         keyvals = list(records.items())
-        c = klass()
+        c = cls()
         for k, v in keyvals:
             if k in ("datasets_to_backup", "filesystems_to_backup", "exclude_patterns"):
                 if hasattr(v, "items"):
                     v = list(v.keys())
                 if k == "datasets_to_backup":
-                    dsets = []
+                    dsets: List[DatasetToBackup] = []
                     for dset in v:
                         if isinstance(dset, str):
                             dsets.append(DatasetToBackup(dset, False, False))
@@ -276,8 +276,8 @@ class SnapshotContext(object):
         self.read_special = False
 
     def datasets_to_backup_sorted_by_mountpoint(self) -> List[Tuple[str, str, str]]:
-        arrange = []
-        already = set()
+        arrange: List[Tuple[str, str, str]] = []
+        already: set[str] = set()
         for d in self.datasets_to_backup:
             if d.glob:
                 dd = [
@@ -392,7 +392,7 @@ class BindMountContext(object):
             yield (d, os.path.join(self.tmpdir + d))
 
     def __enter__(self) -> None:
-        needsmount = []
+        needsmount: List[Tuple[str, str]] = []
         for d, mp in self.fsmounts():
             if not os.path.exists(mp) or not is_mountpoint(mp):
                 needsmount.append((mp, d))
@@ -405,7 +405,7 @@ class BindMountContext(object):
                 sudo("mount", "--bind", d, mp)
 
     def __exit__(self, *unused: Any) -> None:
-        for d, mp in reversed(list(self.fsmounts())):
+        for _, mp in reversed(list(self.fsmounts())):
             if is_mountpoint(mp):
                 try:
                     status("Unmounting file system %s", mp)
@@ -466,7 +466,7 @@ def check_connectivity(cmd: List[str]) -> None:
             time.sleep(3)
         else:
             break
-    p.check_returncode()
+    p.check_returncode()  # type: ignore
 
 
 def nc(host: str) -> List[str]:
@@ -497,7 +497,7 @@ class VmBridgeContext(object):
 
         check_connectivity(cmd=wrap(nc(self.host)))
 
-        opts_list = []
+        opts_list: List[str] = []
         for opt in SSH_OPTS:
             opts_list.extend(["-o", opt])
 
@@ -519,7 +519,7 @@ class NoBridgeContext(object):
     def __enter__(self) -> None:
         check_connectivity(cmd=nc(self.host))
 
-        opts_list = []
+        opts_list: List[str] = []
         for opt in SSH_OPTS:
             opts_list.extend(["-o", opt])
 
@@ -652,7 +652,7 @@ def run_compact() -> int:
         "ionice",
         "-c3",
         "borg",
-        "prune",
+        "compact",
         "--info",
     ] + params
     return subprocess.call(echo + cmd)
@@ -660,7 +660,7 @@ def run_compact() -> int:
 
 def run_collector(promfile: str, telemetry_timeout: int) -> None:
     def r2t(x: str) -> float:
-        return cast(float, dateutil.parser.parse(x).timestamp())
+        return dateutil.parser.parse(x).timestamp()
 
     Metric = collections.namedtuple("Metric", ["name", "labels", "value"])
 
@@ -838,6 +838,7 @@ def main(args: List[str]) -> None:
         c = Cfg.from_file(opts.config)
     except ValueError as e:
         fatal(os.EX_USAGE, "Fatal error: " + str(e))
+        return  # appease the type checking gods
 
     execdate = output("date", "+%Y-%m-%d").strip()
     os.environ["BORG_KEY_FILE"] = os.path.expanduser("~/.borg-offsite-backup.key")
@@ -880,6 +881,7 @@ def main(args: List[str]) -> None:
             read_special = (
                 snapshot_contexts[0].read_special if snapshot_contexts else False
             )
+            retval = None
             if not terminated:
                 retval = (
                     None
