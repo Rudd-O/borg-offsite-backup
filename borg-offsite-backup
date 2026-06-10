@@ -658,6 +658,34 @@ def run_compact() -> int:
     return subprocess.call(echo + cmd)
 
 
+def find_textfile_directory():
+    # Look for node exporter.
+    pid = None
+    textfile_directory = None
+    for f in glob.glob("/proc/*/exe"):
+        try:
+            if "/usr/bin" in os.readlink(f) and (
+                "node-exporter" in os.readlink(f) or "node_exporter" in os.readlink(f)
+            ):
+                pid = f.split("/")[2]
+                break
+        except (FileNotFoundError, PermissionError):
+            pass
+    if pid is None:
+        # No node exporter.
+        return textfile_directory
+    else:
+        # Node exporter.  Looks for args.
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = [x.decode("utf-8") for x in f.read().split(b"\0")]
+        prefix = "--collector.textfile.directory="
+        for arg in cmdline:
+            if arg.startswith(prefix):
+                textfile_directory = arg[len(prefix) :]
+                break
+    return textfile_directory
+
+
 def run_collector(promfile: str, telemetry_timeout: int) -> None:
     def r2t(x: str) -> float:
         return dateutil.parser.parse(x).timestamp()
@@ -766,10 +794,7 @@ def run_collector(promfile: str, telemetry_timeout: int) -> None:
             f = sys.stdout
         else:
             if os.path.sep not in promfile:
-                cmd = "cat /proc/$(pgrep -f ^/usr/bin/.*node.*exporter | head -1 | cut -d ' ' -f 1)/cmdline | tr '\\0' '\\n' | grep -- --collector.textfile.directory= | sed 's/^--collector.textfile.directory=//'"
-                directory = subprocess.check_output(
-                    ["bash", "-c", cmd], text=True
-                ).rstrip("\n")
+                directory = find_textfile_directory()
                 assert directory, (
                     f"specified --telemetry-file {promfile}"
                     " must be an absolute path because Node Exporter"
